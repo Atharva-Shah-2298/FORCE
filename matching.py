@@ -3,7 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import gc
 import ray
-import faiss
+import vector_search
 from tqdm import tqdm
 
 # Dipy and related imports
@@ -104,17 +104,17 @@ def compute_uncertainty_and_ambiguity(profile):
     ambiguities = widths / profile.shape[1]
     return uncertainties.astype(np.float32), ambiguities.astype(np.float32)
 
-def create_faiss_index(signal_array_norm):
+def create_vector_search_index(signal_array_norm):
     # cosine similarity via inner product on L2-normalized features
     dimension = signal_array_norm.shape[1]
-    index = faiss.IndexFlatIP(dimension)
+    index = vector_search.IndexFlatIP(dimension)
     index.add(signal_array_norm)  # base vectors
     return index
 
 @ray.remote
-def faiss_search(index, chunk_indices, maskdata_chunk_normalized, labels, penalized_array):
+def vector_search_search(index, chunk_indices, maskdata_chunk_normalized, labels, penalized_array):
     """
-    Perform FAISS search with penalty adjustment.
+    Perform vector_search search with penalty adjustment.
 
     Returns:
       closest_labels: (Nchunk, 724)
@@ -154,12 +154,12 @@ rk_map  = np.zeros((maskdata_flattened.shape[0]), dtype=dtype_config) if rk  is 
 mk_map  = np.zeros((maskdata_flattened.shape[0]), dtype=dtype_config) if mk  is not None else None
 kfa_map = np.zeros((maskdata_flattened.shape[0]), dtype=dtype_config) if kfa is not None else None
 
-# New microFA maps
+# microFA maps
 ufa_wm_map = np.zeros((Nvox,), dtype=dtype_config)
 ufa_voxel_map = np.zeros((Nvox,), dtype=dtype_config)
 ufa_smt_map = np.zeros((Nvox,), dtype=dtype_config) if ufa_smt is not None else None
 
-###################################### Normalize and build FAISS ######################################
+###################################### Normalize and build vector_search ######################################
 # Normalize voxel signals
 mask_norm = np.linalg.norm(maskdata_flattened, axis=1, keepdims=True)
 mask_norm[mask_norm == 0] = 1.0
@@ -172,7 +172,7 @@ lib_norm[lib_norm == 0] = 1.0
 signals_norm = (signals / lib_norm).astype(np.float32, copy=False)
 signals_norm = np.ascontiguousarray(signals_norm)
 
-faiss_index = create_faiss_index(signals_norm)
+vector_search_index = create_vector_search_index(signals_norm)
 
 # Penalty by number of fibers in library
 num_fibers = np.ascontiguousarray(num_fibers.astype(np.float32))
@@ -181,7 +181,7 @@ penalty_ref = ray.put(penalty_array.astype(np.float32))
 
 sphere_ref = ray.put(sphere)
 
-###################################### Chunked FAISS matching ######################################
+###################################### Chunked vector_search matching ######################################
 num_chunks = int(np.ceil(Nvox / chunk_size))
 chunks = [np.arange(i * chunk_size, min((i + 1) * chunk_size, Nvox), dtype=np.int32)
           for i in range(num_chunks)]
@@ -190,7 +190,7 @@ res = []
 inflight_cap = 20  # throttle outstanding Ray tasks
 for i, chunk in enumerate(chunks):
     print(f"Submitting chunk {i + 1} of {num_chunks}...")
-    res.append(faiss_search.remote(faiss_index, chunk, maskdata_norm[chunk], labels, penalty_ref))
+    res.append(vector_search_search.remote(vector_search_index, chunk, maskdata_norm[chunk], labels, penalty_ref))
 
     if len(res) >= inflight_cap:
         results = ray.get(res)
