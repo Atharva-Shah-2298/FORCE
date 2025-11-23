@@ -62,33 +62,19 @@ def get_dperp_extra(d_par, f_intra):
     return d_par * (1 - f_intra) / (1 + f_intra)
 
 ################ MicroFA helpers #######################
-def microfa_stick_zeppelin(Da, dperp_ex, W_in, W_ex, eps=1e-12):
+def fa_stick_zeppelin(d_par, d_perp, f_intra):
     """
     microFA for a mixture of sticks (Da, 0, 0) and zeppelins (Da, dperp_ex, dperp_ex),
-    with weights W_in and W_ex for intra and extra, respectively.
+    Because we assume that the intra and extra diffusivities are the same, we can simplify the formula.
+    As each fascicle will have the same fa, we can simplify the formula to calculate the microFA for a single fascicle.
+    and the final microFA is the same.
     """
-    if (W_in + W_ex) <= eps:
-        return 0.0
-    if W_ex <= eps:
-        return 1.0
-    num = W_in * (Da ** 2) + W_ex * ((Da - dperp_ex) ** 2)
-    den = W_in * (Da ** 2) + W_ex * (Da ** 2 + 2.0 * (dperp_ex ** 2))
-    return float(np.sqrt(num / den)) if den > 0 else 0.0
+    e = 1.0 - f_intra
+    num = d_par - e * d_perp
+    den = np.sqrt(d_par**2 + 2 * (e**2) * d_perp**2)
+    return num / den
 
-def microfa_voxel_from_parts(Da, dperp_ex, W_in, W_ex, wm_frac, gm_frac, d_gm, csf_frac, d_csf, eps=1e-12):
-    """
-    microFA for full voxel: WM anisotropy in numerator, WM + GM + CSF in denominator.
-    GM and CSF are isotropic so they add to the denominator only.
-    """
-    if wm_frac + gm_frac + csf_frac <= eps:
-        return 0.0
-    wm_num = W_in * (Da ** 2) + W_ex * ((Da - dperp_ex) ** 2)
-    wm_den = W_in * (Da ** 2) + W_ex * (Da ** 2 + 2.0 * (dperp_ex ** 2))
-    gm_den = 3.0 * (d_gm ** 2)
-    csf_den = 3.0 * (d_csf ** 2)
-    total_num = wm_frac * wm_num
-    total_den = wm_frac * wm_den + gm_frac * gm_den + csf_frac * csf_den
-    return float(np.sqrt(total_num / total_den)) if total_den > eps else 0.0
+
 
 ###################################### Single fiber simulation ##########################################
 def generate_single_fiber():
@@ -100,7 +86,7 @@ def generate_single_fiber():
 
     labels = np.zeros((target_sphere.shape[0]), dtype=label_dtype)
     S0 = 100.0
-    d_par = np.random.uniform(1.5e-3, 3.0e-3)
+    d_par = np.random.uniform(2.0e-3, 3.0e-3)
     if tortuisity:
         d_perp_extra = get_dperp_extra(d_par, f_intra)
     else:
@@ -152,7 +138,7 @@ def generate_two_fibers():
     fiber_frac1 = np.random.uniform(0.2, 0.8)
     fiber_fractions = [fiber_frac1, 1 - fiber_frac1]
 
-    d_par = np.random.uniform(1.5e-3, 3.0e-3)
+    d_par = np.random.uniform(2.0e-3, 3.0e-3)
     if tortuisity:
         d_perp_extra = get_dperp_extra(d_par, f_in[0])
     else:
@@ -220,7 +206,7 @@ def generate_three_fibers():
     while any(fiber_fracs < 0.2):
         fiber_fracs = np.random.dirichlet([1, 1, 1])
 
-    d_par = np.random.uniform(1.5e-3, 3.0e-3)
+    d_par = np.random.uniform(2.0e-3, 3.0e-3)
     if tortuisity:
         d_perp_extra = get_dperp_extra(d_par, f_in[0])
     else:
@@ -330,38 +316,74 @@ def create_mixed_signal():
     # Combine signals
     combined_signal = wm_fraction * wm_signal + gm_fraction * gm_signal + csf_fraction * csf_signal
 
+# ################################### Analytical implementation of DKI  ##########################################
+
+#     mevals_total = np.zeros(((2*num_fiber) * len(target_sphere) + 2, 3))
+#     angles_orient = np.vstack([target_sphere] * (2 * num_fiber)).astype(np.float64)
+#     angles_orient = np.vstack([angles_orient, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])  # GM, CSF
+#     fractions_total = np.zeros((2 * num_fiber * len(target_sphere) + 2))
+
+#     index_label = np.where(wm_label==1)[0] 
+#     L = len(target_sphere)
+#     for k in range(num_fiber):
+#     # Normalize ODF weights for this fiber
+#         odf_w = bingham_sf[index_label[k]][wm_disp].astype(np.float64)
+#         odf_w /= odf_w.sum()
+
+#         start = k * 2 * L
+#         mid   = start + L
+#         end   = mid + L
+
+#         # Intra (stick)
+#         mevals_total[start:mid, 0] = wm_d_par
+#         mevals_total[start:mid, 1] = 0.0
+#         mevals_total[start:mid, 2] = 0.0
+#         fractions_total[start:mid] = wm_fraction * fracs[k] * f_ins[k] * odf_w
+
+#         # Extra
+#         mevals_total[mid:end, 0] = wm_d_par
+#         mevals_total[mid:end, 1] = wm_d_perp
+#         mevals_total[mid:end, 2] = wm_d_perp
+#         fractions_total[mid:end] = wm_fraction * fracs[k] * (1.0 - f_ins[k]) * odf_w
+
+#     # GM / CSF (isotropic)
+#     mevals_total[-2, :] = gm_d_par
+#     fractions_total[-2] = gm_fraction
+#     mevals_total[-1, :] = csf_d_par
+#     fractions_total[-1] = csf_fraction
+
+#     _, dt, kt = multi_tensor_dki(gtab, mevals_total, angles=angles_orient, fractions=fractions_total * 100, S0=100)
+
+#     # Compute the final diffusion metrics
+#     dt_evals, dt_evecs = dti.decompose_tensor(dti.from_lower_triangular(dt))
+#     fa_mixed = dti.fractional_anisotropy(dt_evals)
+#     md_mixed = dti.mean_diffusivity(dt_evals)
+#     rd_mixed = dti.radial_diffusivity(dt_evals)
+#     # Convert to array of shape (N, 1) for DKI functions
+
+#     dki_params = np.concatenate([dt_evals.ravel(), dt_evecs.ravel(),kt.ravel()])
+
+    
+#     # dki params
+#     ak = axial_kurtosis(dki_params)
+#     rk = radial_kurtosis(dki_params)
+#     mk = mean_kurtosis(dki_params)
+#     kfa = kurtosis_fractional_anisotropy(dki_params)
+################################### Analytical DKI computation ##########################################
     # If WM fraction is below threshold, set WM labels and ODF to zero for export
     if wm_fraction > wm_threshold:
         combined_odf = 50.0 * wm_fraction * wm_odf  # scaled for visualization
     else:
         wm_label = np.zeros(len(target_sphere), dtype=label_dtype)
         combined_odf = np.zeros(len(target_sphere), dtype=np.float16)
-
-    # ---------- microFA of WM only ----------
-    fracs_arr = np.asarray(fracs[:num_fiber], dtype=float)
-    f_ins_arr = np.asarray(f_ins[:num_fiber], dtype=float)
-
-    W_in = float(np.sum(fracs_arr * f_ins_arr)) if fracs_arr.size else 0.0
-    W_ex = float(np.sum(fracs_arr * (1.0 - f_ins_arr))) if fracs_arr.size else 0.0
-
-    # Recover shared extra radial diffusivity
-    d_perp_ex = float(wm_d_perp) / W_ex if W_ex > 0 else 0.0
-    Da = float(wm_d_par)
-
-    ufa_wm = microfa_stick_zeppelin(Da, d_perp_ex, W_in, W_ex)
+    ufa_wm = 0.0
+    for k in range(wm_num_fib):
+        fa_wm = fa_stick_zeppelin(wm_d_par, wm_d_perp, f_ins[k])
+        ufa_wm += fa_wm * fracs[k]
+    
 
     # ---------- microFA of full voxel ----------
-    ufa_voxel = microfa_voxel_from_parts(
-        Da=Da,
-        dperp_ex=d_perp_ex,
-        W_in=W_in,
-        W_ex=W_ex,
-        wm_frac=wm_fraction,
-        gm_frac=gm_fraction,
-        d_gm=float(gm_d_par),
-        csf_frac=csf_fraction,
-        d_csf=float(csf_d_par),
-    )
+    ufa_voxel = ufa_wm * wm_fraction
 
     # return all the metrics and signals
     # Indices must match the consumer loop below
@@ -454,6 +476,10 @@ dti_fit = dti_model.fit(signals[:, use_mask])
 fa_dti = dti_fit.fa.astype(dtype_config)
 md_dti = dti_fit.md.astype(dtype_config)
 rd_dti = dti_fit.rd.astype(dtype_config)
+
+
+
+
 
 ################################### Optional DKI computation ##########################################
 if run_dki:
