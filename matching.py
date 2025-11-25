@@ -3,7 +3,6 @@ import os
 import matplotlib.pyplot as plt
 import gc
 import ray
-import vector_search
 from tqdm import tqdm
 
 # Dipy and related imports
@@ -25,10 +24,10 @@ chunk_size = 10000   # voxels per chunk
 num_cpus = 24
 
 ###################################### data paths #########################################
-bval_path = "165840/bvals"
-bvec_path = "165840/bvecs"
-data_path = "165840/denoised_arr_p2s.nii.gz"
-mask_path = "165840/nodif_brain_mask.nii.gz"
+bval_path = "/home/athshah/Phi/165840/bvals"
+bvec_path = "/home/athshah/Phi/165840/bvecs"
+data_path = "/home/athshah/Phi/165840/denoised_arr_p2s.nii.gz"
+mask_path = "/home/athshah/Phi/165840/nodif_brain_mask.nii.gz"
 
 sims_dir = "/home/athshah/submission/simulated_data"          # folder that holds simulated_data.npz
 output_dir = "/home/athshah/Phi/submission/hcp_output"
@@ -38,8 +37,8 @@ os.makedirs(output_dir, exist_ok=True)
 data, affine = load_nifti(data_path)
 mask, _ = load_nifti(mask_path)
 bvals, bvecs = read_bvals_bvecs(bval_path, bvec_path)
-gtab = gradient_table(bvals, bvecs)
-sphere = get_sphere('repulsion724')
+gtab = gradient_table(bvals=bvals, bvecs=bvecs)
+sphere = get_sphere(name='repulsion724')
 target_sphere = sphere.vertices
 
 # Mask is slighttly going into meninges. So erode a bit.
@@ -49,7 +48,11 @@ mask = binary_erosion(mask, structure=np.ones((3, 3, 3)), iterations=2)
 #################################### load simulated library #####################################
 sims_path = os.path.join(sims_dir, 'simulated_data.npz')
 sims_data = np.load(sims_path, allow_pickle=False)
-
+use_faiss = True
+if not use_faiss:
+    import vector_search as faiss
+else:
+    import faiss
 # Required fields from the coherent simulator
 signals        = sims_data['signals']          # (Nsims, Ngrad)
 labels         = sims_data['labels']           # (Nsims, 724), 0 or 1 at peak dirs
@@ -104,17 +107,17 @@ def compute_uncertainty_and_ambiguity(profile):
     ambiguities = widths / profile.shape[1]
     return uncertainties.astype(np.float32), ambiguities.astype(np.float32)
 
-def create_vector_search_index(signal_array_norm):
+def create_faiss_index(signal_array_norm):
     # cosine similarity via inner product on L2-normalized features
     dimension = signal_array_norm.shape[1]
-    index = vector_search.IndexFlatIP(dimension)
+    index = faiss.IndexFlatIP(dimension)
     index.add(signal_array_norm)  # base vectors
     return index
 
 @ray.remote
-def vector_search_search(index, chunk_indices, maskdata_chunk_normalized, labels, penalized_array):
+def faiss_search(index, chunk_indices, maskdata_chunk_normalized, labels, penalized_array):
     """
-    Perform vector_search search with penalty adjustment.
+    Perform FAISS search with penalty adjustment.
 
     Returns:
       closest_labels: (Nchunk, 724)
@@ -154,12 +157,12 @@ rk_map  = np.zeros((maskdata_flattened.shape[0]), dtype=dtype_config) if rk  is 
 mk_map  = np.zeros((maskdata_flattened.shape[0]), dtype=dtype_config) if mk  is not None else None
 kfa_map = np.zeros((maskdata_flattened.shape[0]), dtype=dtype_config) if kfa is not None else None
 
-# microFA maps
+# New microFA maps
 ufa_wm_map = np.zeros((Nvox,), dtype=dtype_config)
 ufa_voxel_map = np.zeros((Nvox,), dtype=dtype_config)
 ufa_smt_map = np.zeros((Nvox,), dtype=dtype_config) if ufa_smt is not None else None
 
-###################################### Normalize and build vector_search ######################################
+###################################### Normalize and build FAISS ######################################
 # Normalize voxel signals
 mask_norm = np.linalg.norm(maskdata_flattened, axis=1, keepdims=True)
 mask_norm[mask_norm == 0] = 1.0
@@ -171,8 +174,10 @@ lib_norm = np.linalg.norm(signals, axis=1, keepdims=True)
 lib_norm[lib_norm == 0] = 1.0
 signals_norm = (signals / lib_norm).astype(np.float32, copy=False)
 signals_norm = np.ascontiguousarray(signals_norm)
+print("Building FAISS index...", flush=True)
 
-vector_search_index = create_vector_search_index(signals_norm)
+
+faiss_index = create_faiss_index(signals_norm)
 
 # Penalty by number of fibers in library
 num_fibers = np.ascontiguousarray(num_fibers.astype(np.float32))
@@ -181,7 +186,7 @@ penalty_ref = ray.put(penalty_array.astype(np.float32))
 
 sphere_ref = ray.put(sphere)
 
-###################################### Chunked vector_search matching ######################################
+###################################### Chunked FAISS matching ######################################
 num_chunks = int(np.ceil(Nvox / chunk_size))
 chunks = [np.arange(i * chunk_size, min((i + 1) * chunk_size, Nvox), dtype=np.int32)
           for i in range(num_chunks)]
@@ -190,7 +195,7 @@ res = []
 inflight_cap = 20  # throttle outstanding Ray tasks
 for i, chunk in enumerate(chunks):
     print(f"Submitting chunk {i + 1} of {num_chunks}...")
-    res.append(vector_search_search.remote(vector_search_index, chunk, maskdata_norm[chunk], labels, penalty_ref))
+    res.append(faiss_search.remote(faiss_index, chunk, maskdata_norm[chunk], labels, penalty_ref))
 
     if len(res) >= inflight_cap:
         results = ray.get(res)
