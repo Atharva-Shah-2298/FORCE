@@ -35,6 +35,12 @@ The FORCE method is described in the associated preprint:
 
 ### 1.2 Python packages
 
+Install all required Python packages with:
+
+```
+pip install -r requirements.txt
+```
+
 The scripts in this repository use the following Python packages:
 
 **Core scientific stack**

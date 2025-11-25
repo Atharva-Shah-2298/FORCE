@@ -1,0 +1,10 @@
+numpy==1.26.4
+matplotlib
+ray
+tqdm
+dipy
+scipy
+psutil
+faiss-cpu
+cython
+
