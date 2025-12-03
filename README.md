@@ -23,6 +23,16 @@ The FORCE method is described in the associated preprint:
 > FORCE: FORward modeling for Complex microstructure Estimation  
 > https://www.researchsquare.com/article/rs-8151109/v1
 
+## Visual Overview
+
+| FORCE Concept | FORCE Capabilities |
+| --- | --- |
+| <img src="img/force_concept.png" alt="Conceptual diagram of the FORCE pipeline" width="400"/> | <img src="img/FORCE_capabilities.png" alt="Overview of FORCE capabilities" width="400"/> |
+
+| HCP DTI | HCP DKI | HCP AMICO |
+| --- | --- | --- |
+| <img src="img/hcp_dti.png" alt="FORCE results on HCP DTI data" width="260"/> | <img src="img/hcp_dki%20(1).png" alt="FORCE results on HCP DKI data" width="260"/> | <img src="img/hcp_amico.png" alt="FORCE results on HCP AMICO data" width="260"/> |
+
 ---
 
 ## 1. Requirements
