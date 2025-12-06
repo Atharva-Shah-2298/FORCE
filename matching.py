@@ -1,20 +1,18 @@
 import numpy as np
 import os
-import matplotlib.pyplot as plt
-import gc
 import ray
 from tqdm import tqdm
+import faiss
+
 
 # Dipy and related imports
 from dipy.data import get_sphere
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.io.image import load_nifti, save_nifti
 from dipy.core.gradients import gradient_table
-from dipy.sims.voxel import all_tensor_evecs
 from dipy.reconst.shm import sf_to_sh, CsaOdfModel
 from dipy.core.sphere import Sphere
 from dipy.io.peaks import save_pam
-import dipy.reconst.dti as dti
 from dipy.direction import peaks_from_model
 
 ###################################### global configs ######################################
@@ -24,13 +22,13 @@ chunk_size = 10000   # voxels per chunk
 num_cpus = 24
 
 ###################################### data paths #########################################
-bval_path = "/home/athshah/Phi/165840/bvals"
-bvec_path = "/home/athshah/Phi/165840/bvecs"
-data_path = "/home/athshah/Phi/165840/denoised_arr_p2s.nii.gz"
-mask_path = "/home/athshah/Phi/165840/nodif_brain_mask.nii.gz"
+bval_path = "" # bval file path
+bvec_path = "" # bvec file path
+data_path = "" # data file path
+mask_path = "" # mask file path
 
-sims_dir = "/home/athshah/submission/simulated_data"          # folder that holds simulated_data.npz
-output_dir = "/home/athshah/Phi/submission/hcp_output"
+sims_dir = ""   # folder that holds simulated_data.npz file
+output_dir = "" # output directory
 os.makedirs(output_dir, exist_ok=True)
 
 ###################################### load data #########################################
@@ -41,18 +39,14 @@ gtab = gradient_table(bvals=bvals, bvecs=bvecs)
 sphere = get_sphere(name='repulsion724')
 target_sphere = sphere.vertices
 
-# Mask is slighttly going into meninges. So erode a bit.
-from scipy.ndimage import binary_erosion
-mask = binary_erosion(mask, structure=np.ones((3, 3, 3)), iterations=2)
+# Mask is slighttly going into meninges. So erode a bit for hcp subject 165840. (optional)
+# Uncomment the following lines if you want to erode the mask for hcp subject 165840.
+# from scipy.ndimage import binary_erosion
+# mask = binary_erosion(mask, structure=np.ones((3, 3, 3)), iterations=2)
 # No need to do it for every data, particular subject has a faulty mask.
 #################################### load simulated library #####################################
 sims_path = os.path.join(sims_dir, 'simulated_data.npz')
 sims_data = np.load(sims_path, allow_pickle=False)
-use_faiss = True
-if not use_faiss:
-    import vector_search as faiss
-else:
-    import faiss
 # Required fields from the coherent simulator
 signals        = sims_data['signals']          # (Nsims, Ngrad)
 labels         = sims_data['labels']           # (Nsims, 724), 0 or 1 at peak dirs
@@ -82,7 +76,7 @@ ufa_voxel     = sims_data['ufa_voxel']         # (Nsims,)
 ufa_smt = sims_data['ufa_smt2'] if 'ufa_smt2' in sims_data.files else None
 
 ###################################### parameters ######################################
-penalty = 1e-4
+penalty = 1e-5
 ray.init(num_cpus=num_cpus)
 
 ###################################### Helper Functions ###############################
@@ -174,7 +168,6 @@ lib_norm = np.linalg.norm(signals, axis=1, keepdims=True)
 lib_norm[lib_norm == 0] = 1.0
 signals_norm = (signals / lib_norm).astype(np.float32, copy=False)
 signals_norm = np.ascontiguousarray(signals_norm)
-print("Building FAISS index...", flush=True)
 
 
 faiss_index = create_faiss_index(signals_norm)

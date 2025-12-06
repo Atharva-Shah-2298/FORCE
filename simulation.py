@@ -49,7 +49,7 @@ num_cpus = 24
 
 # Optional heavy model fits for a one on one comparison
 run_dki = False
-run_msdki = True
+run_msdki = False
 
 ###################################### Helper ##########################################
 def get_dperp_extra(d_par, f_intra):
