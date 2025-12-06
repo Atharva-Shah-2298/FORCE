@@ -1,30 +1,5 @@
 # FORCE: FORward modeling for Complex microstructure Estimation
 
-This repository contains code for the FORCE pipeline, which builds a large library of simulated diffusion MRI signals and then matches real data to this library to obtain fiber orientations and microstructural maps.
-
-The main components provided here are:
-
-- `simulation.py`  
-  Generates a large number of simulated signals and saves it to `simulated_data.npz`.
-
-- `matching.py`  
-  Uses FAISS and Ray to match real diffusion MRI data to the simulated library and produces ODFs, peaks, and microstructural maps.
-
-- `setup_fast.py`  
-  Builds the `faster_multitensor` and `vector_search.pyx` Cython extension used in the simulator.
-
-Additional code (expected in the repository) includes:
-
-- `faster_multitensor.pyx`, `vector_search.pyx` and its compiled extension module  
-- `utils/geometry.py`, `utils/distribution.py`, `utils/analytical.py`  
-
-The FORCE method is described in the associated preprint:
-
-> FORCE: FORward modeling for Complex microstructure Estimation  
-> https://www.researchsquare.com/article/rs-8151109/v1
-
-## Visual Overview
-
 | FORCE Concept | FORCE Capabilities |
 | --- | --- |
 | <img src="img/force_concept.png" alt="Conceptual diagram of the FORCE pipeline" width="400"/> | <img src="img/FORCE_capabilities.png" alt="Overview of FORCE capabilities" width="400"/> |
@@ -35,39 +10,116 @@ The FORCE method is described in the associated preprint:
 
 ---
 
-## 1. Requirements
+## Introduction
 
-### 1.1 Python and OS
+FORCE is a novel framework for diffusion MRI analysis that builds a vast number of simulated diffusion signals and matches real data to this library to obtain fiber orientations and microstructural maps.
 
-- Python 3.8 or newer
-- A Unix like environment is strongly recommended (Linux or macOS)
-- A C or C++ compiler for building the Cython extension (for example `gcc` or `clang`)
+The pipeline provides:
+- **Multi-fiber tractography peaks** from a single matching step
+- **NODDI-like metrics** (neurite density, orientation dispersion, CSF fraction)
+- **DTI & DKI metrics** (FA, MD, RD, AD)
+- **Tissue fraction maps** (white matter, gray matter, CSF)
+- **Uncertainty and ambiguity measures** for quality assessment
 
-### 1.2 Python packages
+The FORCE method is described in the associated preprint:
 
-Install all required Python packages with:
+> FORCE: FORward modeling for Complex microstructure Estimation  
+> https://www.researchsquare.com/article/rs-8151109/v1
 
-```
+---
+
+## Quick Start with Demo
+
+### 1. Install Dependencies
+
+First, install all required Python packages:
+
+```bash
 pip install -r requirements.txt
 ```
 
-The scripts in this repository use the following Python packages:
+### 2. Run the Demo Notebook
 
-**Core scientific stack**
+The easiest way to get started is to run `demo.ipynb`, which automatically fetches the **Stanford HARDI dataset** from DIPY and demonstrates the complete FORCE pipeline:
 
-- `numpy`
-- `scipy`
-- `matplotlib`
+```bash
+jupyter notebook demo.ipynb
+```
 
-**Diffusion MRI and microstructure modeling**
+The demo will:
+1. Download the Stanford HARDI dataset (if not already cached)
+2. Preprocess the data (denoising and masking)
+3. Generate the simulation library
+4. Match real data to simulations using FAISS
+5. Visualize tissue fractions, NODDI metrics, DTI metrics, and uncertainty maps
 
-- `dipy`  
-- `nibabel` (usually installed automatically with `dipy`, but you can also install it explicitly)
+---
 
-**Parallel and distributed computing**
+## Using Your Own Data
 
-- `ray`
-- `tqdm`
-- `psutil`
+For running FORCE on your own diffusion MRI data, use the standalone scripts:
 
-** Run by passing in correct paths for the bvals, bvecs and preprocessed dataset in simulation.py and matching.py. The formats are expected to be in the DIPY expected format. **
+### 1. Simulation (`simulation.py`)
+
+Edit the paths at the top of `simulation.py`:
+
+```python
+bval_path = "/path/to/your/bvals"
+bvec_path = "/path/to/your/bvecs"
+output_dir = "/path/to/output/directory"
+```
+
+Then run:
+
+```bash
+python simulation.py
+```
+
+This generates `simulated_data.npz` containing the simulation library matched to your acquisition protocol.
+
+### 2. Matching (`matching.py`)
+
+Edit the paths at the top of `matching.py`:
+
+```python
+bval_path = "/path/to/your/bvals"
+bvec_path = "/path/to/your/bvecs"
+data_path = "/path/to/your/preprocessed_dwi.nii.gz"
+mask_path = "/path/to/your/brain_mask.nii.gz"
+sims_dir = "/path/to/simulated_data"  # folder containing simulated_data.npz
+output_dir = "/path/to/output/directory"
+```
+
+Then run:
+
+```bash
+python matching.py
+```
+
+This produces ODFs, peaks, and all microstructural maps as NIfTI files.
+
+---
+
+## Repository Structure
+
+| File | Description |
+| --- | --- |
+| `demo.ipynb` | Interactive notebook demonstrating the full pipeline on Stanford HARDI data |
+| `simulation.py` | Generates simulated diffusion signals library |
+| `matching.py` | Matches real data to simulations |
+| `faster_multitensor.pyx` | Cython extension for fast multi-tensor signal generation |
+| `vector_search.pyx` | Cython extension for vector similarity search |
+| `setup_fast.py` | Builds the Cython extensions |
+| `utils/` | Helper modules for geometry, distributions, and analytical computations |
+
+---
+
+## Requirements
+
+- **Python**: 3.8 or newer
+
+All dependencies are listed in `requirements.txt` and can be installed with a single command:
+
+```bash
+pip install -r requirements.txt
+```
