@@ -1,21 +1,15 @@
 import numpy as np
 import os
-import time
-import gc
 import ray
 from tqdm import tqdm
-import psutil
+
 # Dipy and related imports
-from dipy.data import get_sphere, default_sphere
+from dipy.data import get_sphere
 from dipy.io.gradients import read_bvals_bvecs
-from dipy.io.image import load_nifti, save_nifti
 from dipy.core.gradients import gradient_table
 from dipy.sims.voxel import all_tensor_evecs
-from dipy.reconst.shm import sf_to_sh
-from dipy.core.sphere import Sphere
-from dipy.io.peaks import save_peaks
 import dipy.reconst.dti as dti
-from dipy.reconst.dki import DiffusionKurtosisModel
+from dipy.reconst.dki import DiffusionKurtosisModel, axial_kurtosis, radial_kurtosis, mean_kurtosis, kurtosis_fracttional_anisotropy
 import dipy.reconst.msdki as msdki
 
 from faster_multitensor import multi_tensor
@@ -25,9 +19,9 @@ from utils.analytical import multi_tensor_dki
 
 ###################################### bval and bvec paths #########################################
 
-bval_path = "/home/athshah/Phi/165840/bvals"
-bvec_path = "/home/athshah/Phi/165840/bvecs"
-output_dir = "/home/athshah/submission/simulated_data"
+bval_path = ""
+bvec_path = ""
+output_dir = ""
 os.makedirs(output_dir, exist_ok=True)
 
 ###################################### sphere and gtab imports ######################################
@@ -35,7 +29,7 @@ os.makedirs(output_dir, exist_ok=True)
 sphere = get_sphere(name='repulsion724')
 target_sphere = sphere.vertices
 bvals, bvecs = read_bvals_bvecs(bval_path, bvec_path)
-gtab = gradient_table(bvals, bvecs)
+gtab = gradient_table(bvals=bvals, bvecs=bvecs)
 bvecs = np.ascontiguousarray(bvecs)
 
 ###################################### Simulation Functions ######################################
