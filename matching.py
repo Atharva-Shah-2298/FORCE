@@ -1,8 +1,9 @@
-import numpy as np
 import os
-import ray
+import platform
 from tqdm import tqdm
-import faiss
+
+import numpy as np
+from cython_matching import select_best_from_topk
 
 
 # Dipy and related imports
@@ -10,7 +11,7 @@ from dipy.data import get_sphere
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.io.image import load_nifti, save_nifti
 from dipy.core.gradients import gradient_table
-from dipy.reconst.shm import sf_to_sh, CsaOdfModel
+from dipy.reconst.shm import CsaOdfModel
 from dipy.core.sphere import Sphere
 from dipy.io.peaks import save_pam
 from dipy.direction import peaks_from_model
@@ -22,13 +23,29 @@ chunk_size = 10000   # voxels per chunk
 num_cpus = 24
 
 ###################################### data paths #########################################
-bval_path = "" # bval file path
-bvec_path = "" # bvec file path
-data_path = "" # data file path
-mask_path = "" # mask file path
 
-sims_dir = ""   # folder that holds simulated_data.npz file
-output_dir = "" # output directory
+if "serge" in platform.node().lower():
+    bval_path = "/home/serge/data/stanford_hardi/HARDI150.bval"
+    bvec_path = "/home/serge/data/stanford_hardi/HARDI150.bvec"
+    data_path = "/home/serge/data/stanford_hardi/HARDI150.nii.gz"
+    mask_path = "/home/serge/data/stanford_hardi/brain_mask.nii.gz"
+    sims_dir = "/Users/skoudoro/data/stanford_hardi/simulated_data"
+    output_dir = "/Users/skoudoro/data/stanford_hardi/hcp_output"
+elif "athshah" in platform.node().lower():
+    bval_path = "/home/athshah/Phi/165840/bvals"
+    bvec_path = "/home/athshah/Phi/165840/bvecs"
+    data_path = "/home/athshah/Phi/165840/data.nii.gz"
+    mask_path = "/home/athshah/Phi/165840/mask.nii.gz"
+    sims_dir = "/home/athshah/Phi/165840/simulated_data"
+    output_dir = "/home/athshah/Phi/165840/hcp_output"
+else:
+    bval_path = ""
+    bvec_path = ""
+    data_path = ""
+    mask_path = ""
+    sims_dir = "" # folder that holds simulated_data.npz
+    output_dir = ""
+
 os.makedirs(output_dir, exist_ok=True)
 
 ###################################### load data #########################################
@@ -47,6 +64,11 @@ target_sphere = sphere.vertices
 #################################### load simulated library #####################################
 sims_path = os.path.join(sims_dir, 'simulated_data.npz')
 sims_data = np.load(sims_path, allow_pickle=False)
+use_faiss = False  # Use improved vector_search with batched processing (memory efficient like FAISS)
+if not use_faiss:
+    import vector_search as faiss
+else:
+    import faiss
 # Required fields from the coherent simulator
 signals        = sims_data['signals']          # (Nsims, Ngrad)
 labels         = sims_data['labels']           # (Nsims, 724), 0 or 1 at peak dirs
@@ -77,16 +99,8 @@ ufa_smt = sims_data['ufa_smt2'] if 'ufa_smt2' in sims_data.files else None
 
 ###################################### parameters ######################################
 penalty = 1e-5
-ray.init(num_cpus=num_cpus)
 
 ###################################### Helper Functions ###############################
-@ray.remote
-def generate_sh_coeff(odf_map_chunk, sphere):
-    sh = np.zeros((odf_map_chunk.shape[0], 45), dtype=np.float32)  # sh_order_max=8 -> 45 coeffs
-    for i in range(odf_map_chunk.shape[0]):
-        sh[i] = sf_to_sh(odf_map_chunk[i], sphere=sphere, sh_order_max=8)
-    return sh
-
 def compute_uncertainty_and_ambiguity(profile):
     """
     Compute uncertainty (IQR) and ambiguity (FWHM fraction) for each row of 'profile'.
@@ -100,31 +114,6 @@ def compute_uncertainty_and_ambiguity(profile):
     widths = np.sum(profile > half_max[:, None], axis=1)
     ambiguities = widths / profile.shape[1]
     return uncertainties.astype(np.float32), ambiguities.astype(np.float32)
-
-def create_faiss_index(signal_array_norm):
-    # cosine similarity via inner product on L2-normalized features
-    dimension = signal_array_norm.shape[1]
-    index = faiss.IndexFlatIP(dimension)
-    index.add(signal_array_norm)  # base vectors
-    return index
-
-@ray.remote
-def faiss_search(index, chunk_indices, maskdata_chunk_normalized, labels, penalized_array):
-    """
-    Perform FAISS search with penalty adjustment.
-
-    Returns:
-      closest_labels: (Nchunk, 724)
-      chunk_indices: 1D indices into flattened voxel space
-      final_indices: (Nchunk,) best matching library indices
-    """
-    D, I = index.search(maskdata_chunk_normalized, k=50)
-    # D shape (Nchunk, 50), I shape (Nchunk, 50)
-    D = D - penalized_array[I]   # penalize by number of fibers
-    best = np.argmax(D, axis=1)
-    final_indices = I[np.arange(len(best)), best]
-    closest_labels = labels[final_indices]
-    return closest_labels, chunk_indices, final_indices
 
 ###################################### Prep input data ######################################
 maskdata = data * mask[..., None]
@@ -170,82 +159,66 @@ signals_norm = (signals / lib_norm).astype(np.float32, copy=False)
 signals_norm = np.ascontiguousarray(signals_norm)
 
 
-faiss_index = create_faiss_index(signals_norm)
+###################################### Library matching with Cython ######################################
+print("Building index and searching for matches...", flush=True)
 
+# Step 1: Build index and perform top-k search using vector_search or FAISS
+# Note: 'faiss' is already aliased to vector_search or real FAISS at line 51-54
+ndwi = signals_norm.shape[1]
+index = faiss.IndexFlatIP(ndwi)
+index.add(signals_norm)
+print(f"Index built with {index.ntotal if hasattr(index, 'ntotal') else len(signals_norm)} vectors, dimension {ndwi}", flush=True)
+
+# Search: vector_search supports n_threads parameter and batched processing, real FAISS doesn't need n_threads
+if use_faiss:
+    print(f"Searching {maskdata_norm.shape[0]} voxels (k=50) using FAISS...", flush=True)
+    D, I = index.search(maskdata_norm, k=50)
+else:
+    # Improved vector_search with internal batched processing (memory efficient)
+    print(f"Searching {maskdata_norm.shape[0]} voxels (k=50, n_threads={num_cpus}) using vector_search...", flush=True)
+    D, I = index.search(maskdata_norm, k=50, n_threads=num_cpus)
+
+print(f"Top-k search completed for {Nvox} voxels", flush=True)
+
+# Step 2: Apply penalties and select best match using Cython
 # Penalty by number of fibers in library
 num_fibers = np.ascontiguousarray(num_fibers.astype(np.float32))
 penalty_array = penalty * num_fibers
-penalty_ref = ray.put(penalty_array.astype(np.float32))
 
-sphere_ref = ray.put(sphere)
+best_indices = select_best_from_topk(
+    top_scores=D,                # (nvoxels, 50)
+    top_indices=I,               # (nvoxels, 50)
+    penalty_array=penalty_array, # (nsims,)
+    n_threads=num_cpus           # 24
+)
 
-###################################### Chunked FAISS matching ######################################
-num_chunks = int(np.ceil(Nvox / chunk_size))
-chunks = [np.arange(i * chunk_size, min((i + 1) * chunk_size, Nvox), dtype=np.int32)
-          for i in range(num_chunks)]
+print("Best matches selected after penalization", flush=True)
 
-res = []
-inflight_cap = 20  # throttle outstanding Ray tasks
-for i, chunk in enumerate(chunks):
-    print(f"Submitting chunk {i + 1} of {num_chunks}...")
-    res.append(faiss_search.remote(faiss_index, chunk, maskdata_norm[chunk], labels, penalty_ref))
+# Step 3: Directly index all output arrays with best_indices
+voxel_flattened = labels[best_indices]
+dispersion_map = dispersion[best_indices]
+fw_map = csf_fraction[best_indices]
+wm_map = wm_fraction[best_indices]
+gm_map = gm_fraction[best_indices]
+nd_map = nd[best_indices]
+odf_map = odfs[best_indices]
+num_fibers_map = num_fibers[best_indices]
+cleaned_dwi = signals[best_indices]
+fa_map = fa[best_indices]
+md_map = md[best_indices]
+rd_map = rd[best_indices]
+fraction_output = fractions[best_indices]
+ufa_wm_map = ufa_wm[best_indices]
+ufa_voxel_map = ufa_voxel[best_indices]
+if ufa_smt_map is not None:
+    ufa_smt_map = ufa_smt[best_indices]
+if ak is not None:
+    ak_map = ak[best_indices]
+    rk_map = rk[best_indices]
+    mk_map = mk[best_indices]
+    kfa_map = kfa[best_indices]
 
-    if len(res) >= inflight_cap:
-        results = ray.get(res)
-        print("Integrating matched chunks...", flush=True)
-        for closest_labels, chunk_indices, final_indices in results:
-            voxel_flattened[chunk_indices] = closest_labels
-            dispersion_map[chunk_indices] = dispersion[final_indices]
-            fw_map[chunk_indices] = csf_fraction[final_indices]
-            wm_map[chunk_indices] = wm_fraction[final_indices]
-            gm_map[chunk_indices] = gm_fraction[final_indices]
-            nd_map[chunk_indices] = nd[final_indices]
-            odf_map[chunk_indices] = odfs[final_indices]
-            num_fibers_map[chunk_indices] = num_fibers[final_indices]
-            cleaned_dwi[chunk_indices] = signals[final_indices]
-            fa_map[chunk_indices] = fa[final_indices]
-            md_map[chunk_indices] = md[final_indices]
-            rd_map[chunk_indices] = rd[final_indices]
-            fraction_output[chunk_indices] = fractions[final_indices]
-            # microFA maps from simulator
-            ufa_wm_map[chunk_indices] = ufa_wm[final_indices]
-            ufa_voxel_map[chunk_indices] = ufa_voxel[final_indices]
-            if ufa_smt_map is not None:
-                ufa_smt_map[chunk_indices] = ufa_smt[final_indices]
-            if ak is not None:
-                ak_map[chunk_indices]  = ak[final_indices]
-                rk_map[chunk_indices]  = rk[final_indices]
-                mk_map[chunk_indices]  = mk[final_indices]
-                kfa_map[chunk_indices] = kfa[final_indices]
-
-        res = []
-
-# drain remaining
-if len(res) > 0:
-    results = ray.get(res)
-    for closest_labels, chunk_indices, final_indices in results:
-        voxel_flattened[chunk_indices] = closest_labels
-        dispersion_map[chunk_indices] = dispersion[final_indices]
-        fw_map[chunk_indices] = csf_fraction[final_indices]
-        wm_map[chunk_indices] = wm_fraction[final_indices]
-        gm_map[chunk_indices] = gm_fraction[final_indices]
-        nd_map[chunk_indices] = nd[final_indices]
-        odf_map[chunk_indices] = odfs[final_indices]
-        num_fibers_map[chunk_indices] = num_fibers[final_indices]
-        cleaned_dwi[chunk_indices] = signals[final_indices]
-        fa_map[chunk_indices] = fa[final_indices]
-        md_map[chunk_indices] = md[final_indices]
-        rd_map[chunk_indices] = rd[final_indices]
-        fraction_output[chunk_indices] = fractions[final_indices]
-        ufa_wm_map[chunk_indices] = ufa_wm[final_indices]
-        ufa_voxel_map[chunk_indices] = ufa_voxel[final_indices]
-        if ufa_smt_map is not None:
-            ufa_smt_map[chunk_indices] = ufa_smt[final_indices]
-        if ak is not None:
-            ak_map[chunk_indices]  = ak[final_indices]
-            rk_map[chunk_indices]  = rk[final_indices]
-            mk_map[chunk_indices]  = mk[final_indices]
-            kfa_map[chunk_indices] = kfa[final_indices]
+print("All parameters matched and indexed", flush=True)
 
 
 ###################################### Peaks postprocessing ######################################
@@ -316,11 +289,9 @@ if ak is not None:
     kfa_map = kfa_map.reshape(mask.shape) * mask
 
 
-ray.shutdown()
-print("Ray shutdown completed.", flush=True)
-
 ###################################### CSA peaks on raw data ######################################
 
+print("Computing CSA peaks.", flush=True)
 csa_model = CsaOdfModel(gtab, sh_order_max=8)
 csa_peaks = peaks_from_model(
     csa_model, data, sphere,

@@ -7,7 +7,7 @@
 import numpy as np
 cimport numpy as cnp
 from libc.math cimport exp
-from cython.parallel import prange
+from cython.parallel cimport prange
 
 def multi_tensor(double[:, ::1] mevals,
                  double[:, :, ::1] evecs,
@@ -21,7 +21,7 @@ def multi_tensor(double[:, ::1] mevals,
         double tmp
 
     with nogil:
-        # Compute each tensor's contribution in parallel
+        # Compute each tensor's contribution in parallel with OpenMP
         for i in prange(n_tensors, schedule='static'):
             single_tensor(mevals[i], evecs[i], bvals, bvecs, tmp_S_all[i])
             tmp = fractions[i] / 100.0
