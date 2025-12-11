@@ -1,3 +1,31 @@
+# Claude Code
+CLAUDE.md
+claude.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# Cython generated files
+faster_multitensor.c
+vector_search.c
+*.c
+*.cpp
+
+# Data
+*.npz
+*.nii.gz
+*.pam5
+*.npy
+
+# IDE
+.vscode/
+.idea/
 # Compiled Cython files
 *.c
 *.so

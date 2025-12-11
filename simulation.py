@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import platform
 import ray
 from tqdm import tqdm
 
@@ -19,9 +20,19 @@ from utils.analytical import multi_tensor_dki
 
 ###################################### bval and bvec paths #########################################
 
-bval_path = ""
-bvec_path = ""
-output_dir = ""
+if "serge" in platform.node().lower():
+    bval_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.bval"
+    bvec_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.bvec"
+    output_dir = "/Users/skoudoro/data/stanford_hardi/simulated_data"
+elif "athshah" in platform.node().lower():
+    bval_path = "/home/athshah/Phi/165840/bvals"
+    bvec_path = "/home/athshah/Phi/165840/bvecs"
+    output_dir = "/home/athshah/Phi/165840/simulated_data"
+else:
+    bval_path = ""
+    bvec_path = ""
+    output_dir = ""
+
 os.makedirs(output_dir, exist_ok=True)
 
 ###################################### sphere and gtab imports ######################################
@@ -49,7 +60,7 @@ num_cpus = 24
 
 # Optional heavy model fits for a one on one comparison
 run_dki = False
-run_msdki = False
+run_msdki = False # True
 
 ###################################### Helper ##########################################
 def get_dperp_extra(d_par, f_intra):
@@ -317,7 +328,7 @@ def create_mixed_signal():
 #     angles_orient = np.vstack([angles_orient, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])  # GM, CSF
 #     fractions_total = np.zeros((2 * num_fiber * len(target_sphere) + 2))
 
-#     index_label = np.where(wm_label==1)[0] 
+#     index_label = np.where(wm_label==1)[0]
 #     L = len(target_sphere)
 #     for k in range(num_fiber):
 #     # Normalize ODF weights for this fiber
@@ -357,7 +368,7 @@ def create_mixed_signal():
 
 #     dki_params = np.concatenate([dt_evals.ravel(), dt_evecs.ravel(),kt.ravel()])
 
-    
+
 #     # dki params
 #     ak = axial_kurtosis(dki_params)
 #     rk = radial_kurtosis(dki_params)
@@ -374,7 +385,7 @@ def create_mixed_signal():
     for k in range(wm_num_fib):
         fa_wm = fa_stick_zeppelin(wm_d_par, wm_d_perp, f_ins[k])
         ufa_wm += fa_wm * fracs[k]
-    
+
 
     # ---------- microFA of full voxel ----------
     ufa_voxel = ufa_wm * wm_fraction
@@ -426,11 +437,11 @@ with tqdm(total=num_simulations, desc="Generating mixed signals") as pbar:
     # Submit initial batch
     pending_futures = [generate_mixed.remote() for _ in range(min(batch_size, num_simulations))]
     submitted = len(pending_futures)
-    
+
     while completed < num_simulations:
         # Wait for at least one future to complete
         ready, pending_futures = ray.wait(pending_futures, num_returns=1, timeout=None)
-        
+
         # Process completed futures
         for future in ready:
             res = ray.get(future)
@@ -448,7 +459,7 @@ with tqdm(total=num_simulations, desc="Generating mixed signals") as pbar:
             fraction_array[completed] = res[11]
             completed += 1
             pbar.update(1)
-        
+
         # Submit more futures to maintain batch_size pending tasks
         while len(pending_futures) < batch_size and submitted < num_simulations:
             pending_futures.append(generate_mixed.remote())
