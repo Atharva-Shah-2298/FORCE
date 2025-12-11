@@ -7,7 +7,7 @@
 import numpy as np
 cimport numpy as cnp
 from libc.math cimport exp
-from cython.parallel import prange
+from cython.parallel cimport prange
 
 
 
@@ -35,10 +35,10 @@ cdef inline void single_tensor(const double[::1] evals,
         bx = bvecs[i, 0]
         by = bvecs[i, 1]
         bz = bvecs[i, 2]
-        
+
         val = (D00 * bx * bx + 2 * D01 * bx * by + 2 * D02 * bx * bz +
                D11 * by * by + 2 * D12 * by * bz + D22 * bz * bz)
-        
+
         S[i] = S0 * exp(-bvals[i] * val)
 
 def multi_tensor(const double[:, ::1] mevals,
@@ -49,20 +49,20 @@ def multi_tensor(const double[:, ::1] mevals,
     cdef:
         int i, j, n = bvals.shape[0], n_tensors = fractions.shape[0]
         double[::1] S = np.zeros(n, dtype=np.float64)
-        
+
         double[::1] tmp_S_one = np.zeros(n, dtype=np.float64)
-        
+
         double frac
 
     with nogil:
         for i in range(n_tensors):
             single_tensor(mevals[i], evecs[i], bvals, bvecs, tmp_S_one)
-            
+
             frac = fractions[i] / 100.0
-            
+
             # Immediately add to the total sum
             if frac > 0:
                 for j in range(n):
                     S[j] += tmp_S_one[j] * frac
-                    
+
     return np.asarray(S)

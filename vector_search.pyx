@@ -19,15 +19,15 @@ import numpy as np
 cimport numpy as cnp
 from libc.stdlib cimport malloc, free, realloc
 from libc.string cimport memcpy, memset
-from cython.parallel cimport prange, parallel
 cimport cython
+from cython.parallel cimport prange, parallel
 
 # Use scipy's cross-platform BLAS interface
 from scipy.linalg.cython_blas cimport sgemm
 
 cnp.import_array()
 
-# OpenMP header (with fallback if not available)
+# OpenMP header (always enabled)
 cdef extern from *:
     """
     #ifdef _OPENMP
@@ -297,10 +297,10 @@ cdef int search_vectors(IndexState* state,
                        int k,
                        float* distances, int* indices,
                        int n_threads) noexcept nogil:
-    """Search for k nearest neighbors using OpenMP parallelization.
+    """Search for k nearest neighbors using batched processing for memory efficiency.
 
-    Computes inner products between queries and database vectors using BLAS,
-    then selects top-k results in parallel using OpenMP.
+    Processes queries in batches to avoid excessive memory allocation, making it
+    suitable for large datasets similar to FAISS.
 
     Parameters
     ----------
@@ -323,6 +323,11 @@ cdef int search_vectors(IndexState* state,
     -------
     int
         0 on success, -1 on failure (invalid input or memory allocation error).
+
+    Notes
+    -----
+    Memory usage: batch_size × ntotal floats (default: 1000 × ntotal ≈ 2GB for 500k library)
+    Previously allocated: nq × ntotal floats (could be 650k × 500k ≈ 1.3TB!)
     """
     if state == NULL or queries == NULL or distances == NULL or indices == NULL:
         return -1
@@ -333,67 +338,95 @@ cdef int search_vectors(IndexState* state,
     if k > state.ntotal:
         k = state.ntotal
 
+    # Set OpenMP threads
     if n_threads > 0:
         omp_set_num_threads(n_threads)
 
-    cdef float* scores = <float*>malloc(nq * state.ntotal * sizeof(float))
+    # Adaptive batch size based on library size to keep memory reasonable
+    # Target: ~2GB per batch (2GB / (ntotal × 4 bytes))
+    cdef int batch_size
+    if state.ntotal < 50000:
+        batch_size = 10000  # Small library: larger batches OK
+    elif state.ntotal < 200000:
+        batch_size = 2000   # Medium library
+    else:
+        batch_size = 1000   # Large library: conservative batches
+
+    # Declare all variables at the beginning
+    cdef int batch_start, batch_end, batch_nq
+    cdef int i, j
+    cdef float* scores = NULL
+    cdef int ret = 0
+    cdef int blas_m, blas_n, blas_k
+    cdef int lda, ldb, ldc
+    cdef float alpha = 1.0
+    cdef float beta = 0.0
+    cdef char trans_t = ord('T')
+    cdef char trans_n = ord('N')
+
+    # Allocate scores buffer for one batch (reused across batches)
+    scores = <float*>malloc(batch_size * state.ntotal * sizeof(float))
     if scores == NULL:
         return -1
 
-    # BLAS matrix multiplication: row-major to column-major conversion
-    # We want: scores[nq x ntotal] = queries[nq x d] @ xb[ntotal x d]^T  (row-major)
-    #
-    # Row-major data viewed as column-major is transposed:
-    #   xb_rowmajor[ntotal x d] ≡ xb_colmajor[d x ntotal] (same memory)
-    #   queries_rowmajor[nq x d] ≡ queries_colmajor[d x nq] (same memory)
-    #   scores_rowmajor[nq x ntotal] ≡ scores_colmajor[ntotal x nq] (same memory)
-    #
-    # We want: scores[nq x ntotal] = queries[nq x d] @ xb^T[d x ntotal]
-    # Transpose both sides: scores^T[ntotal x nq] = xb[ntotal x d] @ queries^T[d x nq]
-    #
-    # scores^T in row-major view ≡ scores in column-major view
-    # queries^T in row-major view ≡ queries in column-major view (no ^T)
-    #
-    # So: scores_colmajor[ntotal x nq] = xb_colmajor^T[ntotal x d] @ queries_colmajor[d x nq]
-    #
-    cdef int blas_m = state.ntotal    # m: rows of result = ntotal
-    cdef int blas_n = nq              # n: cols of result = nq
-    cdef int blas_k = state.d         # k: common dimension = d
-    cdef int lda = state.d            # lda: leading dim of xb_colmajor[d x ntotal] = d
-    cdef int ldb = state.d            # ldb: leading dim of queries_colmajor[d x nq] = d
-    cdef int ldc = state.ntotal       # ldc: leading dim of scores_colmajor[ntotal x nq] = ntotal
-    cdef float alpha = 1.0
-    cdef float beta = 0.0
-    cdef char trans_t = 'T'
-    cdef char trans_n = 'N'
+    # Process batches (C-style loop for nogil compatibility)
+    batch_start = 0
+    while batch_start < nq:
+        batch_end = batch_start + batch_size
+        if batch_end > nq:
+            batch_end = nq
+        batch_nq = batch_end - batch_start
 
-    # sgemm: C = alpha * op(A) * op(B) + beta * C (all column-major)
-    # We need: scores_colmajor[ntotal x nq] = xb_colmajor^T[ntotal x d] @ queries_colmajor[d x nq]
-    sgemm(
-        &trans_t,           # transa: 'T' = transpose xb_colmajor[d x ntotal] → [ntotal x d]
-        &trans_n,           # transb: 'N' = no transpose queries_colmajor[d x nq]
-        &blas_m,            # m: rows of result = ntotal
-        &blas_n,            # n: cols of result = nq
-        &blas_k,            # k: common dimension = d
-        &alpha,             # alpha: 1.0
-        state.xb,           # A: xb (stored row-major, viewed as column-major [d x ntotal])
-        &lda,               # lda: leading dim of A = d
-        queries,            # B: queries (stored row-major, viewed as column-major [d x nq])
-        &ldb,               # ldb: leading dim of B = d
-        &beta,              # beta: 0.0
-        scores,             # C: scores
-        &ldc                # ldc: leading dim of C = ntotal
-    )
+        # BLAS parameters for this batch
+        blas_m = state.ntotal
+        blas_n = batch_nq
+        blas_k = state.d
+        lda = state.d
+        ldb = state.d
+        ldc = state.ntotal
 
-    cdef int i
-    for i in prange(nq, schedule='static'):
-        select_top_k_heap(
-            &scores[i * state.ntotal],
-            state.ntotal,
-            k,
-            &distances[i * k],
-            &indices[i * k]
+        # Compute scores for this batch using BLAS
+        # scores_batch[batch_nq × ntotal] = queries_batch[batch_nq × d] @ xb[ntotal × d]^T
+        sgemm(
+            &trans_t,                           # transa: transpose xb
+            &trans_n,                           # transb: no transpose queries
+            &blas_m,                            # m: ntotal
+            &blas_n,                            # n: batch_nq
+            &blas_k,                            # k: d
+            &alpha,                             # alpha: 1.0
+            state.xb,                           # A: xb database
+            &lda,                               # lda: d
+            &queries[batch_start * state.d],   # B: queries for this batch
+            &ldb,                               # ldb: d
+            &beta,                              # beta: 0.0
+            scores,                             # C: output scores
+            &ldc                                # ldc: ntotal
         )
+
+        # Extract top-k for each query in this batch
+        if n_threads == 1:
+            # Serial execution (single thread)
+            for i in range(batch_nq):
+                select_top_k_heap(
+                    &scores[i * state.ntotal],
+                    state.ntotal,
+                    k,
+                    &distances[(batch_start + i) * k],
+                    &indices[(batch_start + i) * k]
+                )
+        else:
+            # Parallel execution with OpenMP
+            for i in prange(batch_nq, schedule='static'):
+                select_top_k_heap(
+                    &scores[i * state.ntotal],
+                    state.ntotal,
+                    k,
+                    &distances[(batch_start + i) * k],
+                    &indices[(batch_start + i) * k]
+                )
+
+        # Move to next batch
+        batch_start = batch_start + batch_size
 
     free(scores)
     return 0
@@ -477,7 +510,7 @@ cdef int reconstruct_vectors(IndexState* state, int i0, int ni, float* out) noex
 # Python interface (minimal def functions)
 # ============================================================================
 
-cdef class IndexFlatIPFunc:
+cdef class IndexFlatIP:
     """Functional-style flat index for inner product similarity search.
 
     This implementation uses a functional programming style with cdef functions,
@@ -500,7 +533,7 @@ cdef class IndexFlatIPFunc:
     Examples
     --------
     >>> import numpy as np
-    >>> index = IndexFlatIPFunc(d=128)
+    >>> index = IndexFlatIP(d=128)
     >>> vectors = np.random.random((1000, 128)).astype('float32')
     >>> index.add(vectors)
     >>> queries = np.random.random((10, 128)).astype('float32')
@@ -530,6 +563,26 @@ cdef class IndexFlatIPFunc:
         """Free allocated memory when object is destroyed."""
         free_index(self.state)
         self.state = NULL
+
+    def __reduce__(self):
+        """Support for pickling (needed for Ray serialization).
+
+        Returns a tuple (callable, args) to reconstruct the object.
+        """
+        if self.state == NULL:
+            return (IndexFlatIP, (0,))
+
+        # Extract all data from C structure
+        cdef int d = self.state.d
+        cdef int ntotal = self.state.ntotal
+
+        # Copy vector data to numpy array
+        cdef cnp.ndarray[cnp.float32_t, ndim=2] data = np.empty((ntotal, d), dtype=np.float32)
+        if ntotal > 0 and self.state.xb != NULL:
+            memcpy(&data[0, 0], self.state.xb, ntotal * d * sizeof(float))
+
+        # Return constructor and state
+        return (_rebuild_index, (d, data))
 
     @property
     def d(self):
@@ -737,6 +790,37 @@ cdef class IndexFlatIPFunc:
 
 
 # ============================================================================
+# Pickle support function (module-level for unpickling)
+# ============================================================================
+
+def _rebuild_index(int d, data):
+    """Rebuild IndexFlatIP from pickled data.
+
+    This function is called during unpickling to reconstruct the index.
+
+    Parameters
+    ----------
+    d : int
+        Vector dimension.
+    data : ndarray of shape (ntotal, d), dtype=float32
+        Vector data to restore.
+
+    Returns
+    -------
+    IndexFlatIP
+        Reconstructed index with restored data.
+    """
+    cdef IndexFlatIP index = IndexFlatIP(d)
+    cdef cnp.ndarray[cnp.float32_t, ndim=2, mode='c'] data_c
+
+    if data.shape[0] > 0:
+        # Ensure data is C-contiguous and properly typed
+        data_c = np.ascontiguousarray(data, dtype=np.float32)
+        index.add(data_c)
+    return index
+
+
+# ============================================================================
 # Pure functional API (no class, just functions)
 # ============================================================================
 
@@ -750,18 +834,18 @@ def create_flat_ip_index(int d):
 
     Returns
     -------
-    IndexFlatIPFunc
+    IndexFlatIP
         New index instance.
     """
-    return IndexFlatIPFunc(d)
+    return IndexFlatIP(d)
 
 
-def add_to_index(IndexFlatIPFunc index, cnp.ndarray[cnp.float32_t, ndim=2, mode='c'] vectors):
+def add_to_index(IndexFlatIP index, cnp.ndarray[cnp.float32_t, ndim=2, mode='c'] vectors):
     """Add vectors to an index.
 
     Parameters
     ----------
-    index : IndexFlatIPFunc
+    index : IndexFlatIP
         Index instance to add vectors to.
     vectors : ndarray of shape (n, d), dtype=float32
         Vectors to add to the database.
@@ -769,7 +853,7 @@ def add_to_index(IndexFlatIPFunc index, cnp.ndarray[cnp.float32_t, ndim=2, mode=
     index.add(vectors)
 
 
-def search_index(IndexFlatIPFunc index,
+def search_index(IndexFlatIP index,
                 cnp.ndarray[cnp.float32_t, ndim=2, mode='c'] queries,
                 int k,
                 int n_threads=0):
@@ -777,7 +861,7 @@ def search_index(IndexFlatIPFunc index,
 
     Parameters
     ----------
-    index : IndexFlatIPFunc
+    index : IndexFlatIP
         Index instance to search.
     queries : ndarray of shape (nq, d), dtype=float32
         Query vectors.
@@ -796,12 +880,12 @@ def search_index(IndexFlatIPFunc index,
     return index.search(queries, k, n_threads)
 
 
-def reset_flat_ip_index(IndexFlatIPFunc index):
+def reset_flat_ip_index(IndexFlatIP index):
     """Reset an index by clearing all vectors.
 
     Parameters
     ----------
-    index : IndexFlatIPFunc
+    index : IndexFlatIP
         Index instance to reset.
     """
     index.reset()
