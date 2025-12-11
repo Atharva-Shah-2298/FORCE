@@ -38,6 +38,14 @@ bvecs = np.ascontiguousarray(bvecs)
 odi_list = np.linspace(0.01, 0.3, 10)
 evecs = np.array([all_tensor_evecs(tuple(point)) for point in target_sphere])
 bingham_sf = bingham_dictionary(target_sphere, odi_list)
+# put everything in a ray store so that it can be accessed by the remote function
+bingham_sf = ray.put(bingham_sf)
+evecs = ray.put(evecs)
+target_sphere = ray.put(target_sphere)
+bvals = ray.put(bvals)
+bvecs = ray.put(bvecs)
+gtab = ray.put(gtab)
+odi_list = ray.put(odi_list)
 
 ####################################### Global Variables #########################################
 tortuisity = False
