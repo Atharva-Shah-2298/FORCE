@@ -9,7 +9,7 @@ from dipy.io.gradients import read_bvals_bvecs
 from dipy.core.gradients import gradient_table
 from dipy.sims.voxel import all_tensor_evecs
 import dipy.reconst.dti as dti
-from dipy.reconst.dki import DiffusionKurtosisModel, axial_kurtosis, radial_kurtosis, mean_kurtosis, kurtosis_fracttional_anisotropy
+from dipy.reconst.dki import DiffusionKurtosisModel, axial_kurtosis, radial_kurtosis, mean_kurtosis, kurtosis_fractional_anisotropy
 import dipy.reconst.msdki as msdki
 
 from faster_multitensor import multi_tensor
