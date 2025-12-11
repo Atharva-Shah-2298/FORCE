@@ -403,11 +403,6 @@ def generate_mixed():
 ################################## Main Simulation Loop ##########################################
 ray.init(num_cpus=num_cpus)
 
-results = []
-futures = [generate_mixed.remote() for _ in range(num_simulations)]
-for future in tqdm(futures, desc="Generating mixed signals"):
-    results.append(ray.get(future))
-
 ##################################### Preallocation ##########################################
 signals = np.zeros((num_simulations, len(bvals)), dtype=dtype_config)
 labels = np.zeros((num_simulations, len(target_sphere)), dtype=label_dtype)
@@ -422,19 +417,45 @@ fraction_array = np.zeros((num_simulations, 3), dtype=dtype_config)
 ufa_wm_arr = np.zeros(num_simulations, dtype=dtype_config)
 ufa_voxel_arr = np.zeros(num_simulations, dtype=dtype_config)
 
-for i, res in enumerate(results):
-    signals[i] = res[0]
-    labels[i] = res[1]
-    num_fibers[i] = res[2]
-    dispersion[i] = res[3]
-    wm_fraction_arr[i] = res[4]
-    gm_fraction_arr[i] = res[5]
-    csf_fraction_arr[i] = res[6]
-    nd_arr[i] = res[7]
-    odfs[i] = res[8]
-    ufa_wm_arr[i] = res[9]
-    ufa_voxel_arr[i] = res[10]
-    fraction_array[i] = res[11]
+# Process results in batches to avoid memory blowup
+# Submit futures in batches and process results as they complete
+batch_size = min(10000, num_simulations)  # Process in batches of 10k
+completed = 0
+
+with tqdm(total=num_simulations, desc="Generating mixed signals") as pbar:
+    # Submit initial batch
+    pending_futures = [generate_mixed.remote() for _ in range(min(batch_size, num_simulations))]
+    submitted = len(pending_futures)
+    
+    while completed < num_simulations:
+        # Wait for at least one future to complete
+        ready, pending_futures = ray.wait(pending_futures, num_returns=1, timeout=None)
+        
+        # Process completed futures
+        for future in ready:
+            res = ray.get(future)
+            signals[completed] = res[0]
+            labels[completed] = res[1]
+            num_fibers[completed] = res[2]
+            dispersion[completed] = res[3]
+            wm_fraction_arr[completed] = res[4]
+            gm_fraction_arr[completed] = res[5]
+            csf_fraction_arr[completed] = res[6]
+            nd_arr[completed] = res[7]
+            odfs[completed] = res[8]
+            ufa_wm_arr[completed] = res[9]
+            ufa_voxel_arr[completed] = res[10]
+            fraction_array[completed] = res[11]
+            completed += 1
+            pbar.update(1)
+        
+        # Submit more futures to maintain batch_size pending tasks
+        while len(pending_futures) < batch_size and submitted < num_simulations:
+            pending_futures.append(generate_mixed.remote())
+            submitted += 1
+
+# Clean up Ray resources
+ray.shutdown()
 
 ################################### DTI computation ##########################################
 # take the lowest shell only for DTI
