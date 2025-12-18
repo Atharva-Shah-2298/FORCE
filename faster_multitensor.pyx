@@ -9,36 +9,12 @@ cimport numpy as cnp
 from libc.math cimport exp
 from cython.parallel import prange
 
-def multi_tensor(double[:, ::1] mevals,
-                 double[:, :, ::1] evecs,
-                 double[::1] fractions,
-                 double[::1] bvals,
-                 double[:, ::1] bvecs):
-    cdef:
-        int i, j, n = bvals.shape[0], n_tensors = fractions.shape[0]
-        double[::1] S = np.zeros(n, dtype=np.float64)
-        double[:, ::1] tmp_S_all = np.zeros((n_tensors, n), dtype=np.float64)
-        double tmp
 
-    with nogil:
-        # Compute each tensor's contribution in parallel
-        for i in prange(n_tensors, schedule='static'):
-            single_tensor(mevals[i], evecs[i], bvals, bvecs, tmp_S_all[i])
-            tmp = fractions[i] / 100.0
-            for j in range(n):
-                tmp_S_all[i, j] *= tmp
 
-        # Sum all contributions sequentially
-        for i in range(n_tensors):
-            for j in range(n):
-                S[j] += tmp_S_all[i, j]
-
-    return np.asarray(S)
-
-cdef inline void single_tensor(double[::1] evals,
-                        double[:, ::1] evec,
-                        double[::1] bvals,
-                        double[:, ::1] bvecs,
+cdef inline void single_tensor(const double[::1] evals,
+                        const double[:, ::1] evec,
+                        const double[::1] bvals,
+                        const double[:, ::1] bvecs,
                         double[::1] S) noexcept nogil:
     cdef:
         int i
@@ -64,3 +40,29 @@ cdef inline void single_tensor(double[::1] evals,
                D11 * by * by + 2 * D12 * by * bz + D22 * bz * bz)
         
         S[i] = S0 * exp(-bvals[i] * val)
+
+def multi_tensor(const double[:, ::1] mevals,
+                 const double[:, :, ::1] evecs,
+                 const double[::1] fractions,
+                 const double[::1] bvals,
+                 const double[:, ::1] bvecs):
+    cdef:
+        int i, j, n = bvals.shape[0], n_tensors = fractions.shape[0]
+        double[::1] S = np.zeros(n, dtype=np.float64)
+        
+        double[::1] tmp_S_one = np.zeros(n, dtype=np.float64)
+        
+        double frac
+
+    with nogil:
+        for i in range(n_tensors):
+            single_tensor(mevals[i], evecs[i], bvals, bvecs, tmp_S_one)
+            
+            frac = fractions[i] / 100.0
+            
+            # Immediately add to the total sum
+            if frac > 0:
+                for j in range(n):
+                    S[j] += tmp_S_one[j] * frac
+                    
+    return np.asarray(S)
