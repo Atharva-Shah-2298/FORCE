@@ -1,9 +1,10 @@
 import os
 import platform
+import time
 from tqdm import tqdm
 
 import numpy as np
-from cython_matching import select_best_from_topk
+import ray
 
 
 # Dipy and related imports
@@ -11,7 +12,7 @@ from dipy.data import default_sphere
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.io.image import load_nifti, save_nifti
 from dipy.core.gradients import gradient_table
-from dipy.reconst.shm import CsaOdfModel
+from dipy.reconst.shm import sf_to_sh, CsaOdfModel
 from dipy.core.sphere import Sphere
 from dipy.io.peaks import save_pam
 from dipy.direction import peaks_from_model
@@ -25,10 +26,10 @@ num_cpus = 24
 
 ###################################### data paths #########################################
 if "serge" in platform.node().lower():
-    bval_path = "/home/serge/data/stanford_hardi/HARDI150.bval"
-    bvec_path = "/home/serge/data/stanford_hardi/HARDI150.bvec"
-    data_path = "/home/serge/data/stanford_hardi/HARDI150.nii.gz"
-    mask_path = "/home/serge/data/stanford_hardi/brain_mask.nii.gz"
+    bval_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.bval"
+    bvec_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.bvec"
+    data_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.nii.gz"
+    mask_path = "/Users/skoudoro/data/stanford_hardi/brain_mask.nii.gz"
     sims_dir = "/Users/skoudoro/data/stanford_hardi/simulated_data"
     output_dir = "/Users/skoudoro/data/stanford_hardi/hcp_output"
 elif "grg1" in platform.node().lower():
@@ -54,9 +55,6 @@ data, affine = load_nifti(data_path)
 mask, _ = load_nifti(mask_path)
 bvals, bvecs = read_bvals_bvecs(bval_path, bvec_path)
 gtab = gradient_table(bvals=bvals, bvecs=bvecs)
-sphere = default_sphere
-target_sphere = sphere.vertices
-
 # Mask is slighttly going into meninges. So erode a bit for hcp subject 165840. (optional)
 # Uncomment the following lines if you want to erode the mask for hcp subject 165840.
 from scipy.ndimage import binary_erosion
@@ -67,12 +65,28 @@ sims_path = os.path.join(sims_dir, 'simulated_data.npz')
 sims_data = np.load(sims_path, allow_pickle=False)
 use_faiss = False  # Use improved vector_search with batched processing (memory efficient like FAISS)
 if not use_faiss:
-    import vector_search as faiss
+    import vec_search as faiss
 else:
     import faiss
 # Required fields from the coherent simulator
 signals        = sims_data['signals']          # (Nsims, Ngrad)
-labels         = sims_data['labels']           # (Nsims, 724), 0 or 1 at peak dirs
+labels         = sims_data['labels']           # (Nsims, n_dirs), 0 or 1 at peak dirs
+
+# Select sphere matching the simulation data dimensions
+n_dirs = labels.shape[1]
+if n_dirs == default_sphere.vertices.shape[0]:
+    sphere = default_sphere
+else:
+    from dipy.data import get_sphere
+    sphere = get_sphere(name='repulsion724')
+    if sphere.vertices.shape[0] != n_dirs:
+        raise ValueError(
+            f"Simulation labels have {n_dirs} directions but no matching "
+            f"sphere found (default_sphere={default_sphere.vertices.shape[0]}, "
+            f"repulsion724={sphere.vertices.shape[0]})"
+        )
+target_sphere = sphere.vertices
+print(f"Using sphere with {target_sphere.shape[0]} vertices (matching simulation data)")
 num_fibers     = sims_data['num_fibers']       # (Nsims,)
 dispersion     = sims_data['dispersion']       # (Nsims,)
 wm_fraction    = sims_data['wm_fraction']      # (Nsims,)
@@ -100,8 +114,16 @@ ufa_smt = sims_data['ufa_smt2'] if 'ufa_smt2' in sims_data.files else None
 
 ###################################### parameters ######################################
 penalty = 1e-5
+ray.init(num_cpus=num_cpus)
 
 ###################################### Helper Functions ###############################
+@ray.remote
+def generate_sh_coeff(odf_map_chunk, sphere):
+    sh = np.zeros((odf_map_chunk.shape[0], 45), dtype=np.float32)  # sh_order_max=8 -> 45 coeffs
+    for i in range(odf_map_chunk.shape[0]):
+        sh[i] = sf_to_sh(odf_map_chunk[i], sphere=sphere, sh_order_max=8)
+    return sh
+
 def compute_uncertainty_and_ambiguity(profile):
     """
     Compute uncertainty (IQR) and ambiguity (FWHM fraction) for each row of 'profile'.
@@ -115,6 +137,31 @@ def compute_uncertainty_and_ambiguity(profile):
     widths = np.sum(profile > half_max[:, None], axis=1)
     ambiguities = widths / profile.shape[1]
     return uncertainties.astype(np.float32), ambiguities.astype(np.float32)
+
+def create_faiss_index(signal_array_norm):
+    # cosine similarity via inner product on L2-normalized features
+    dimension = signal_array_norm.shape[1]
+    index = faiss.IndexFlatIP(dimension)
+    index.add(signal_array_norm)  # base vectors
+    return index
+
+@ray.remote
+def faiss_search(index, chunk_indices, maskdata_chunk_normalized, labels, penalized_array):
+    """
+    Perform FAISS search with penalty adjustment.
+
+    Returns:
+      closest_labels: (Nchunk, 724)
+      chunk_indices: 1D indices into flattened voxel space
+      final_indices: (Nchunk,) best matching library indices
+    """
+    D, I = index.search(maskdata_chunk_normalized, k=50)
+    # D shape (Nchunk, 50), I shape (Nchunk, 50)
+    D = D - penalized_array[I]   # penalize by number of fibers
+    best = np.argmax(D, axis=1)
+    final_indices = I[np.arange(len(best)), best]
+    closest_labels = labels[final_indices]
+    return closest_labels, chunk_indices, final_indices
 
 ###################################### Prep input data ######################################
 maskdata = data * mask[..., None]
@@ -164,28 +211,8 @@ signals_norm = (signals / lib_norm).astype(np.float32, copy=False)
 signals_norm = np.ascontiguousarray(signals_norm)
 
 
-###################################### Library matching with Cython ######################################
-print("Building index and searching for matches...", flush=True)
+faiss_index = create_faiss_index(signals_norm)
 
-# Step 1: Build index and perform top-k search using vector_search or FAISS
-# Note: 'faiss' is already aliased to vector_search or real FAISS at line 51-54
-ndwi = signals_norm.shape[1]
-index = faiss.IndexFlatIP(ndwi)
-index.add(signals_norm)
-print(f"Index built with {index.ntotal if hasattr(index, 'ntotal') else len(signals_norm)} vectors, dimension {ndwi}", flush=True)
-
-# Search: vector_search supports n_threads parameter and batched processing, real FAISS doesn't need n_threads
-if use_faiss:
-    print(f"Searching {maskdata_norm.shape[0]} voxels (k=50) using FAISS...", flush=True)
-    D, I = index.search(maskdata_norm, k=50)
-else:
-    # Improved vector_search with internal batched processing (memory efficient)
-    print(f"Searching {maskdata_norm.shape[0]} voxels (k=50, n_threads={num_cpus}) using vector_search...", flush=True)
-    D, I = index.search(maskdata_norm, k=50, n_threads=num_cpus)
-
-print(f"Top-k search completed for {Nvox} voxels", flush=True)
-
-# Step 2: Apply penalties and select best match using Cython
 # Penalty by number of fibers in library
 num_fibers = np.ascontiguousarray(num_fibers.astype(np.float32))
 penalty_array = penalty * num_fibers
@@ -336,6 +363,9 @@ if ak is not None:
     mk_map  = mk_map.reshape(mask.shape)  * mask
     kfa_map = kfa_map.reshape(mask.shape) * mask
 
+
+ray.shutdown()
+print("Ray shutdown completed.", flush=True)
 
 ###################################### CSA peaks on raw data ######################################
 

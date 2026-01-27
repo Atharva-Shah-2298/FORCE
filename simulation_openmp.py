@@ -1,9 +1,10 @@
 import os
 import gc
+import platform
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
-import psutil  # for memory usage
+import psutil  # for memory usage (optional package)
 
 from dipy.data import default_sphere
 from dipy.io.gradients import read_bvals_bvecs
@@ -76,7 +77,7 @@ def compute_analytical_dki_batch(
         mean_kurtosis,
         kurtosis_fractional_anisotropy,
     )
-    
+
     # Unpack input memmap info
     (
         num_fibers_path, num_fibers_shape, num_fibers_dtype,
@@ -92,7 +93,7 @@ def compute_analytical_dki_batch(
         fraction_array_path, fraction_array_shape, fraction_array_dtype,
         f_ins_path, f_ins_shape, f_ins_dtype,
     ) = input_memmap_info
-    
+
     # Unpack output memmap info
     (
         ak_path, ak_shape, ak_dtype,
@@ -100,7 +101,7 @@ def compute_analytical_dki_batch(
         mk_path, mk_shape, mk_dtype,
         kfa_path, kfa_shape, kfa_dtype,
     ) = output_memmap_info
-    
+
     # Open input memmaps (read-only)
     num_fibers_mm = np.memmap(num_fibers_path, mode="r", dtype=num_fibers_dtype, shape=num_fibers_shape)
     labels_mm = np.memmap(labels_path, mode="r", dtype=labels_dtype, shape=labels_shape)
@@ -114,25 +115,25 @@ def compute_analytical_dki_batch(
     csf_fraction_mm = np.memmap(csf_fraction_path, mode="r", dtype=csf_fraction_dtype, shape=csf_fraction_shape)
     fraction_array_mm = np.memmap(fraction_array_path, mode="r", dtype=fraction_array_dtype, shape=fraction_array_shape)
     f_ins_mm = np.memmap(f_ins_path, mode="r", dtype=f_ins_dtype, shape=f_ins_shape)
-    
+
     # Open output memmaps (read-write)
     ak_mm = np.memmap(ak_path, mode="r+", dtype=ak_dtype, shape=ak_shape)
     rk_mm = np.memmap(rk_path, mode="r+", dtype=rk_dtype, shape=rk_shape)
     mk_mm = np.memmap(mk_path, mode="r+", dtype=mk_dtype, shape=mk_shape)
     kfa_mm = np.memmap(kfa_path, mode="r+", dtype=kfa_dtype, shape=kfa_shape)
-    
+
     # Recreate gradient table in worker
     gtab = gradient_table(gtab_bvals, bvecs=gtab_bvecs)
-    
+
     L = len(target_sphere)
-    
+
     for i in range(batch_size):
         idx = start_idx + i
         num_fiber = int(num_fibers_mm[idx])
-        
+
         if num_fiber == 0:
             continue
-        
+
         wm_label = labels_mm[idx]
         wm_disp = float(wm_disp_mm[idx])
         wm_d_par = float(wm_d_par_mm[idx])
@@ -144,65 +145,65 @@ def compute_analytical_dki_batch(
         csf_fraction = float(csf_fraction_mm[idx])
         fracs = fraction_array_mm[idx]
         f_ins = f_ins_mm[idx]
-        
+
         mevals_total = np.zeros(((2 * num_fiber) * L + 2, 3))
         angles_orient = np.vstack([target_sphere] * (2 * num_fiber)).astype(np.float64)
         angles_orient = np.vstack([angles_orient, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
         fractions_total = np.zeros((2 * num_fiber * L + 2))
-        
+
         index_label = np.where(wm_label == 1)[0]
-        
+
         # Find nearest ODI value
         odi_idx = np.argmin(np.abs(odi_list - wm_disp))
         nearest_odi = odi_list[odi_idx]
-        
+
         for k in range(num_fiber):
             if k < len(index_label):
                 odf_w = bingham_sf[index_label[k]][nearest_odi].astype(np.float64)
             else:
                 odf_w = np.ones(L, dtype=np.float64) / L
             odf_w = odf_w / odf_w.sum()
-            
+
             start = k * 2 * L
             mid = start + L
             end = mid + L
-            
+
             mevals_total[start:mid, 0] = wm_d_par
             mevals_total[start:mid, 1] = 0.0
             mevals_total[start:mid, 2] = 0.0
             fractions_total[start:mid] = wm_fraction * fracs[k] * f_ins[k] * odf_w
-            
+
             mevals_total[mid:end, 0] = wm_d_par
             mevals_total[mid:end, 1] = wm_d_perp
             mevals_total[mid:end, 2] = wm_d_perp
             fractions_total[mid:end] = wm_fraction * fracs[k] * (1.0 - f_ins[k]) * odf_w
-        
+
         mevals_total[-2, :] = gm_d_par
         fractions_total[-2] = gm_fraction
         mevals_total[-1, :] = csf_d_par
         fractions_total[-1] = csf_fraction
-        
+
         try:
             _, dt, kt = multi_tensor_dki(
                 gtab, mevals_total, angles=angles_orient,
                 fractions=fractions_total * 100, S0=100
             )
-            
+
             dt_evals, dt_evecs = dti.decompose_tensor(dti.from_lower_triangular(dt))
             dki_params = np.concatenate([dt_evals.ravel(), dt_evecs.ravel(), kt.ravel()])
-            
+
             ak_mm[idx] = axial_kurtosis(dki_params)
             rk_mm[idx] = radial_kurtosis(dki_params)
             mk_mm[idx] = mean_kurtosis(dki_params)
             kfa_mm[idx] = kurtosis_fractional_anisotropy(dki_params)
         except Exception:
             pass
-    
+
     ak_mm.flush()
     rk_mm.flush()
     mk_mm.flush()
     kfa_mm.flush()
-    
+
     return batch_size
 
 
@@ -325,7 +326,28 @@ def main():
     # -------------------------------------------------------------------------
     # Configuration
     # -------------------------------------------------------------------------
-    output_dir = ""
+    if "serge" in platform.node().lower():
+        bval_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.bval"
+        bvec_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.bvec"
+        data_path = "/Users/skoudoro/data/stanford_hardi/HARDI150.nii.gz"
+        mask_path = "/Users/skoudoro/data/stanford_hardi/brain_mask.nii.gz"
+        sims_dir = "/Users/skoudoro/data/stanford_hardi/simulated_data"
+        output_dir = "/Users/skoudoro/data/stanford_hardi/hcp_output"
+    elif "grg1" in platform.node().lower():
+        bval_path = "/home/athshah/Phi/165840/bvals"
+        bvec_path = "/home/athshah/Phi/165840/bvecs"
+        data_path = "/home/athshah/Phi/165840/denoised_arr_p2s.nii.gz"
+        mask_path = "/home/athshah/Phi/165840/nodif_brain_mask.nii.gz"
+        sims_dir = "/home/athshah/Phi/FORCE/simulated_data_cython"
+        output_dir = "/home/athshah/FORCE/simulated_data_cython"
+    else:
+        bval_path = ""
+        bvec_path = ""
+        data_path = ""
+        mask_path = ""
+        sims_dir = "" # folder that holds simulated_data.npz
+        output_dir = ""
+
     os.makedirs(output_dir, exist_ok=True)
 
     run_dki = False
@@ -357,9 +379,7 @@ def main():
     target_sphere = np.ascontiguousarray(sphere.vertices, dtype=np.float64)
 
     # Load bvals and bvecs
-    bvals, bvecs = read_bvals_bvecs(
-        "/home/athshah/Phi/165840/bvals", "/home/athshah/Phi/165840/bvecs"
-    )
+    bvals, bvecs = read_bvals_bvecs(bval_path, bvec_path)
     bvals = np.ascontiguousarray(bvals.astype(np.float64))
     bvecs = np.ascontiguousarray(bvecs.astype(np.float64))
 
@@ -475,7 +495,7 @@ def main():
         memmap_paths["f_ins"], (num_simulations, 3), dtype_config,
     )
 
-    
+
     with tqdm(total=num_simulations, desc="Simulating (multiprocessing)") as pbar:
         with ProcessPoolExecutor(max_workers=num_cpus) as executor:
             # Submit all batches
@@ -497,7 +517,7 @@ def main():
                 ): (start_idx, bs)
                 for start_idx, bs in batch_specs
             }
-            
+
             # Process results as they complete
             for future in as_completed(futures):
                 batch_size_done = future.result()
@@ -522,7 +542,7 @@ def main():
 
     bvals_small = bvals[use_mask]
     bvecs_small = bvecs[use_mask]
-    gtab_small = gradient_table(bvals_small, bvecs_small)
+    gtab_small = gradient_table(bvals_small, bvecs=bvecs_small)
 
     dti_model = dti.TensorModel(gtab_small)
 
@@ -578,29 +598,29 @@ def main():
     # -------------------------------------------------------------------------
     # Analytical DKI computation
     # -------------------------------------------------------------------------
-    
+
     if run_analytical_dki:
         print(f"Running analytical DKI computation with {num_cpus} processes...")
-        
+
         # Create output memmaps for analytical DKI
         ak_analytical_mm = create_memmap("ak_analytical", dtype_config, (num_simulations,))
         rk_analytical_mm = create_memmap("rk_analytical", dtype_config, (num_simulations,))
         mk_analytical_mm = create_memmap("mk_analytical", dtype_config, (num_simulations,))
         kfa_analytical_mm = create_memmap("kfa_analytical", dtype_config, (num_simulations,))
-        
+
         # Build batch specs for DKI computation
         DKI_BATCH_SIZE = 500
         num_dki_batches_full = num_simulations // DKI_BATCH_SIZE
         dki_remainder = num_simulations % DKI_BATCH_SIZE
         total_dki_batches = num_dki_batches_full + (1 if dki_remainder > 0 else 0)
-        
+
         dki_batch_specs = []
         current_start = 0
         for batch_idx in range(total_dki_batches):
             bs = DKI_BATCH_SIZE if batch_idx < num_dki_batches_full else dki_remainder
             dki_batch_specs.append((current_start, bs))
             current_start += bs
-        
+
         # Pack input memmap info
         input_memmap_info = (
             memmap_paths["num_fibers"], (num_simulations,), dtype_config,
@@ -616,7 +636,7 @@ def main():
             memmap_paths["fraction_array"], (num_simulations, 3), dtype_config,
             memmap_paths["f_ins"], (num_simulations, 3), dtype_config,
         )
-        
+
         # Pack output memmap info
         output_memmap_info = (
             memmap_paths["ak_analytical"], (num_simulations,), dtype_config,
@@ -624,7 +644,7 @@ def main():
             memmap_paths["mk_analytical"], (num_simulations,), dtype_config,
             memmap_paths["kfa_analytical"], (num_simulations,), dtype_config,
         )
-        
+
         with tqdm(total=num_simulations, desc="Analytical DKI (parallel)") as pbar:
             with ProcessPoolExecutor(max_workers=num_cpus) as executor:
                 futures = {
@@ -642,17 +662,17 @@ def main():
                     ): (start_idx, bs)
                     for start_idx, bs in dki_batch_specs
                 }
-                
+
                 for future in as_completed(futures):
                     batch_size_done = future.result()
                     pbar.update(batch_size_done)
-        
+
         # Use analytical values
         ak_arr = np.array(ak_analytical_mm)
         rk_arr = np.array(rk_analytical_mm)
         mk_arr = np.array(mk_analytical_mm)
         kfa_arr = np.array(kfa_analytical_mm)
-        
+
         # Add to memmaps list for cleanup
         memmaps.extend([ak_analytical_mm, rk_analytical_mm, mk_analytical_mm, kfa_analytical_mm])
 

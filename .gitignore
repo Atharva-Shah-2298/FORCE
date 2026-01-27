@@ -48,4 +48,5 @@ dist/
 .env
 .venv/
 venv/
+fast_knn_v3/
 

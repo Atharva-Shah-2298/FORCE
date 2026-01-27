@@ -84,7 +84,29 @@ extensions = [
         include_dirs=[np.get_include()],
         extra_compile_args=compile_args,
         extra_link_args=link_args
-    )
+    ),
+    Extension(
+        "heap",
+        sources=["heap.pyx"],
+        include_dirs=[np.get_include()],
+        extra_compile_args=compile_args,  # + ['-std=c++17', ],
+        extra_link_args=link_args,
+        language="c++",
+    ),
+    Extension(
+        "_search",
+        sources=[
+            "_search.pyx",
+            "src/distances_simd.cpp",
+        ],
+        include_dirs=[
+            np.get_include(),
+            "src",
+        ],
+        extra_compile_args=compile_args,  # + ['-std=c++17', ],
+        extra_link_args=link_args,
+        language="c++",
+    ),
 ]
 
 setup(
