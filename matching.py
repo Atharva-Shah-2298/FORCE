@@ -3,10 +3,12 @@ import os
 import ray
 from tqdm import tqdm
 import faiss
+import time
+import platform
 
 
 # Dipy and related imports
-from dipy.data import get_sphere
+from dipy.data import default_sphere
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.io.image import load_nifti, save_nifti
 from dipy.core.gradients import gradient_table
@@ -15,6 +17,7 @@ from dipy.core.sphere import Sphere
 from dipy.io.peaks import save_pam
 from dipy.direction import peaks_from_model
 
+
 ###################################### global configs ######################################
 dtype_config = np.float32
 label_dtype = np.uint8
@@ -22,13 +25,29 @@ chunk_size = 10000   # voxels per chunk
 num_cpus = 24
 
 ###################################### data paths #########################################
-bval_path = "" # bval file path
-bvec_path = "" # bvec file path
-data_path = "" # data file path
-mask_path = "" # mask file path
+if "serge" in platform.node().lower():
+    bval_path = "/home/serge/data/stanford_hardi/HARDI150.bval"
+    bvec_path = "/home/serge/data/stanford_hardi/HARDI150.bvec"
+    data_path = "/home/serge/data/stanford_hardi/HARDI150.nii.gz"
+    mask_path = "/home/serge/data/stanford_hardi/brain_mask.nii.gz"
+    sims_dir = "/Users/skoudoro/data/stanford_hardi/simulated_data"
+    output_dir = "/Users/skoudoro/data/stanford_hardi/hcp_output"
+elif "grg1" in platform.node().lower():
+    bval_path = "/home/athshah/Phi/165840/bvals"
+    bvec_path = "/home/athshah/Phi/165840/bvecs"
+    data_path = "/home/athshah/Phi/165840/denoised_arr_p2s.nii.gz"
+    mask_path = "/home/athshah/Phi/165840/nodif_brain_mask.nii.gz"
+    sims_dir = "/home/athshah/Phi/FORCE/simulated_data_cython"
+    output_dir = "/home/athshah/FORCE/simulated_data_cython"
+else:
+    bval_path = ""
+    bvec_path = ""
+    data_path = ""
+    mask_path = ""
+    sims_dir = "" # folder that holds simulated_data.npz
+    output_dir = ""
 
-sims_dir = ""   # folder that holds simulated_data.npz file
-output_dir = "" # output directory
+
 os.makedirs(output_dir, exist_ok=True)
 
 ###################################### load data #########################################
@@ -36,13 +55,13 @@ data, affine = load_nifti(data_path)
 mask, _ = load_nifti(mask_path)
 bvals, bvecs = read_bvals_bvecs(bval_path, bvec_path)
 gtab = gradient_table(bvals=bvals, bvecs=bvecs)
-sphere = get_sphere(name='repulsion724')
+sphere = default_sphere
 target_sphere = sphere.vertices
 
 # Mask is slighttly going into meninges. So erode a bit for hcp subject 165840. (optional)
 # Uncomment the following lines if you want to erode the mask for hcp subject 165840.
-# from scipy.ndimage import binary_erosion
-# mask = binary_erosion(mask, structure=np.ones((3, 3, 3)), iterations=2)
+from scipy.ndimage import binary_erosion
+mask = binary_erosion(mask, structure=np.ones((3, 3, 3)), iterations=2)
 # No need to do it for every data, particular subject has a faulty mask.
 #################################### load simulated library #####################################
 sims_path = os.path.join(sims_dir, 'simulated_data.npz')
@@ -157,6 +176,10 @@ ufa_voxel_map = np.zeros((Nvox,), dtype=dtype_config)
 ufa_smt_map = np.zeros((Nvox,), dtype=dtype_config) if ufa_smt is not None else None
 
 ###################################### Normalize and build FAISS ######################################
+mask_flat = mask.reshape(-1).astype(bool)       # flattened 3D mask
+valid_indices = np.nonzero(mask_flat)[0].astype(np.int32)
+N_valid = valid_indices.shape[0]               # number of voxels inside mask
+
 # Normalize voxel signals
 mask_norm = np.linalg.norm(maskdata_flattened, axis=1, keepdims=True)
 mask_norm[mask_norm == 0] = 1.0
@@ -180,10 +203,14 @@ penalty_ref = ray.put(penalty_array.astype(np.float32))
 sphere_ref = ray.put(sphere)
 
 ###################################### Chunked FAISS matching ######################################
-num_chunks = int(np.ceil(Nvox / chunk_size))
-chunks = [np.arange(i * chunk_size, min((i + 1) * chunk_size, Nvox), dtype=np.int32)
-          for i in range(num_chunks)]
+# Use mask to just match the masked data.
+num_chunks = int(np.ceil(N_valid / chunk_size))
+chunks = [
+    valid_indices[i * chunk_size : min((i + 1) * chunk_size, N_valid)]
+    for i in range(num_chunks)
+]
 
+start_time = time.time()
 res = []
 inflight_cap = 20  # throttle outstanding Ray tasks
 for i, chunk in enumerate(chunks):
@@ -247,7 +274,10 @@ if len(res) > 0:
             mk_map[chunk_indices]  = mk[final_indices]
             kfa_map[chunk_indices] = kfa[final_indices]
 
+end_time = time.time()
+print(f"Time taken for FAISS matching: {end_time - start_time} seconds")
 
+start_time = time.time()
 ###################################### Peaks postprocessing ######################################
 def postprocess_peaks(preds, target_sphere, fracs):
     """

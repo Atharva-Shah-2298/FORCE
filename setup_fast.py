@@ -11,12 +11,12 @@ extensions = [
         extra_link_args=['-O3', '-march=native', '-ffast-math']
     ),
     Extension(
-        "vector_search",
-        sources=["vector_search.pyx"],
+        "sim_core",
+        ["sim_core.pyx"],
         include_dirs=[np.get_include()],
-        extra_compile_args=['-O3', '-march=native', '-ffast-math'],
-        extra_link_args=['-O3', '-march=native', '-ffast-math']
-    )
+        extra_compile_args=["-O3"],
+    ),
+        
 ]
 
 setup(
