@@ -325,7 +325,7 @@ def main():
     # -------------------------------------------------------------------------
     # Configuration
     # -------------------------------------------------------------------------
-    output_dir = "/home/athshah/Phi/FORCE/simulated_data_fixed"
+    output_dir = ""
     os.makedirs(output_dir, exist_ok=True)
 
     run_dki = False

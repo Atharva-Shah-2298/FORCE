@@ -106,7 +106,9 @@ This produces ODFs, peaks, and all microstructural maps as NIfTI files.
 | --- | --- |
 | `demo.ipynb` | Interactive notebook demonstrating the full pipeline on Stanford HARDI data |
 | `simulation.py` | Generates simulated diffusion signals library |
+| `simulation_openmp.py` | Parallelized simulation using ProcessPoolExecutor and memory-mapped arrays for large-scale generation |
 | `matching.py` | Matches real data to simulations |
+| `sim_core.pyx` | Cython module for mixed WM/GM/CSF signal simulation with microstructural parameters |
 | `faster_multitensor.pyx` | Cython extension for fast multi-tensor signal generation |
 | `vector_search.pyx` | Cython extension for vector similarity search |
 | `setup_fast.py` | Builds the Cython extensions |
