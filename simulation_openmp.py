@@ -8,7 +8,7 @@ import psutil  # for memory usage
 from dipy.data import default_sphere
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.core.gradients import gradient_table
-from dipy.sims.voxel import all_tensor_evecs
+from dipy.sims.voxel import all_tensor_evecs, multi_tensor_dki
 from dipy.reconst import dti
 from dipy.reconst.dki import (
     DiffusionKurtosisModel,
@@ -20,7 +20,7 @@ from dipy.reconst.dki import (
 import dipy.reconst.msdki as msdki
 
 from utils.distribution import bingham_dictionary
-from sim_core import create_mixed_signal
+from sim_core import create_mixed_signal, set_diffusivity_ranges
 
 # Limit BLAS threading so our parallelism is controllable
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -53,6 +53,159 @@ def smallest_shell_bval(bvals, b0_threshold=50, shell_tolerance=50):
     return min_shell, shell_mask
 
 
+def compute_analytical_dki_batch(
+    start_idx,
+    batch_size,
+    target_sphere,
+    bingham_sf,
+    odi_list,
+    gtab_bvals,
+    gtab_bvecs,
+    input_memmap_info,
+    output_memmap_info,
+):
+    """
+    Worker function to compute analytical DKI for a batch of voxels.
+    """
+    from dipy.core.gradients import gradient_table
+    from dipy.sims.voxel import multi_tensor_dki
+    from dipy.reconst import dti
+    from dipy.reconst.dki import (
+        axial_kurtosis,
+        radial_kurtosis,
+        mean_kurtosis,
+        kurtosis_fractional_anisotropy,
+    )
+    
+    # Unpack input memmap info
+    (
+        num_fibers_path, num_fibers_shape, num_fibers_dtype,
+        labels_path, labels_shape, labels_dtype,
+        wm_disp_path, wm_disp_shape, wm_disp_dtype,
+        wm_d_par_path, wm_d_par_shape, wm_d_par_dtype,
+        wm_d_perp_path, wm_d_perp_shape, wm_d_perp_dtype,
+        gm_d_par_path, gm_d_par_shape, gm_d_par_dtype,
+        csf_d_par_path, csf_d_par_shape, csf_d_par_dtype,
+        wm_fraction_path, wm_fraction_shape, wm_fraction_dtype,
+        gm_fraction_path, gm_fraction_shape, gm_fraction_dtype,
+        csf_fraction_path, csf_fraction_shape, csf_fraction_dtype,
+        fraction_array_path, fraction_array_shape, fraction_array_dtype,
+        f_ins_path, f_ins_shape, f_ins_dtype,
+    ) = input_memmap_info
+    
+    # Unpack output memmap info
+    (
+        ak_path, ak_shape, ak_dtype,
+        rk_path, rk_shape, rk_dtype,
+        mk_path, mk_shape, mk_dtype,
+        kfa_path, kfa_shape, kfa_dtype,
+    ) = output_memmap_info
+    
+    # Open input memmaps (read-only)
+    num_fibers_mm = np.memmap(num_fibers_path, mode="r", dtype=num_fibers_dtype, shape=num_fibers_shape)
+    labels_mm = np.memmap(labels_path, mode="r", dtype=labels_dtype, shape=labels_shape)
+    wm_disp_mm = np.memmap(wm_disp_path, mode="r", dtype=wm_disp_dtype, shape=wm_disp_shape)
+    wm_d_par_mm = np.memmap(wm_d_par_path, mode="r", dtype=wm_d_par_dtype, shape=wm_d_par_shape)
+    wm_d_perp_mm = np.memmap(wm_d_perp_path, mode="r", dtype=wm_d_perp_dtype, shape=wm_d_perp_shape)
+    gm_d_par_mm = np.memmap(gm_d_par_path, mode="r", dtype=gm_d_par_dtype, shape=gm_d_par_shape)
+    csf_d_par_mm = np.memmap(csf_d_par_path, mode="r", dtype=csf_d_par_dtype, shape=csf_d_par_shape)
+    wm_fraction_mm = np.memmap(wm_fraction_path, mode="r", dtype=wm_fraction_dtype, shape=wm_fraction_shape)
+    gm_fraction_mm = np.memmap(gm_fraction_path, mode="r", dtype=gm_fraction_dtype, shape=gm_fraction_shape)
+    csf_fraction_mm = np.memmap(csf_fraction_path, mode="r", dtype=csf_fraction_dtype, shape=csf_fraction_shape)
+    fraction_array_mm = np.memmap(fraction_array_path, mode="r", dtype=fraction_array_dtype, shape=fraction_array_shape)
+    f_ins_mm = np.memmap(f_ins_path, mode="r", dtype=f_ins_dtype, shape=f_ins_shape)
+    
+    # Open output memmaps (read-write)
+    ak_mm = np.memmap(ak_path, mode="r+", dtype=ak_dtype, shape=ak_shape)
+    rk_mm = np.memmap(rk_path, mode="r+", dtype=rk_dtype, shape=rk_shape)
+    mk_mm = np.memmap(mk_path, mode="r+", dtype=mk_dtype, shape=mk_shape)
+    kfa_mm = np.memmap(kfa_path, mode="r+", dtype=kfa_dtype, shape=kfa_shape)
+    
+    # Recreate gradient table in worker
+    gtab = gradient_table(gtab_bvals, bvecs=gtab_bvecs)
+    
+    L = len(target_sphere)
+    
+    for i in range(batch_size):
+        idx = start_idx + i
+        num_fiber = int(num_fibers_mm[idx])
+        
+        if num_fiber == 0:
+            continue
+        
+        wm_label = labels_mm[idx]
+        wm_disp = float(wm_disp_mm[idx])
+        wm_d_par = float(wm_d_par_mm[idx])
+        wm_d_perp = float(wm_d_perp_mm[idx])
+        gm_d_par = float(gm_d_par_mm[idx])
+        csf_d_par = float(csf_d_par_mm[idx])
+        wm_fraction = float(wm_fraction_mm[idx])
+        gm_fraction = float(gm_fraction_mm[idx])
+        csf_fraction = float(csf_fraction_mm[idx])
+        fracs = fraction_array_mm[idx]
+        f_ins = f_ins_mm[idx]
+        
+        mevals_total = np.zeros(((2 * num_fiber) * L + 2, 3))
+        angles_orient = np.vstack([target_sphere] * (2 * num_fiber)).astype(np.float64)
+        angles_orient = np.vstack([angles_orient, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
+        fractions_total = np.zeros((2 * num_fiber * L + 2))
+        
+        index_label = np.where(wm_label == 1)[0]
+        
+        # Find nearest ODI value
+        odi_idx = np.argmin(np.abs(odi_list - wm_disp))
+        nearest_odi = odi_list[odi_idx]
+        
+        for k in range(num_fiber):
+            if k < len(index_label):
+                odf_w = bingham_sf[index_label[k]][nearest_odi].astype(np.float64)
+            else:
+                odf_w = np.ones(L, dtype=np.float64) / L
+            odf_w = odf_w / odf_w.sum()
+            
+            start = k * 2 * L
+            mid = start + L
+            end = mid + L
+            
+            mevals_total[start:mid, 0] = wm_d_par
+            mevals_total[start:mid, 1] = 0.0
+            mevals_total[start:mid, 2] = 0.0
+            fractions_total[start:mid] = wm_fraction * fracs[k] * f_ins[k] * odf_w
+            
+            mevals_total[mid:end, 0] = wm_d_par
+            mevals_total[mid:end, 1] = wm_d_perp
+            mevals_total[mid:end, 2] = wm_d_perp
+            fractions_total[mid:end] = wm_fraction * fracs[k] * (1.0 - f_ins[k]) * odf_w
+        
+        mevals_total[-2, :] = gm_d_par
+        fractions_total[-2] = gm_fraction
+        mevals_total[-1, :] = csf_d_par
+        fractions_total[-1] = csf_fraction
+        
+        try:
+            _, dt, kt = multi_tensor_dki(
+                gtab, mevals_total, angles=angles_orient,
+                fractions=fractions_total * 100, S0=100
+            )
+            
+            dt_evals, dt_evecs = dti.decompose_tensor(dti.from_lower_triangular(dt))
+            dki_params = np.concatenate([dt_evals.ravel(), dt_evecs.ravel(), kt.ravel()])
+            
+            ak_mm[idx] = axial_kurtosis(dki_params)
+            rk_mm[idx] = radial_kurtosis(dki_params)
+            mk_mm[idx] = mean_kurtosis(dki_params)
+            kfa_mm[idx] = kurtosis_fractional_anisotropy(dki_params)
+        except Exception:
+            pass
+    
+    ak_mm.flush()
+    rk_mm.flush()
+    mk_mm.flush()
+    kfa_mm.flush()
+    
+    return batch_size
+
+
 def generate_batch_to_memmap(
     start_idx,
     batch_size,
@@ -65,6 +218,7 @@ def generate_batch_to_memmap(
     wm_thresh,
     tort,
     memmap_info,
+    diffusivity_cfg,
 ):
     """
     Worker function for multiprocessing parallelism.
@@ -85,7 +239,17 @@ def generate_batch_to_memmap(
         ufa_wm_path, ufa_wm_shape, ufa_wm_dtype,
         ufa_voxel_path, ufa_voxel_shape, ufa_voxel_dtype,
         fraction_array_path, fraction_array_shape, fraction_array_dtype,
+        # Additional DKI parameters
+        wm_disp_path, wm_disp_shape, wm_disp_dtype,
+        wm_d_par_path, wm_d_par_shape, wm_d_par_dtype,
+        wm_d_perp_path, wm_d_perp_shape, wm_d_perp_dtype,
+        gm_d_par_path, gm_d_par_shape, gm_d_par_dtype,
+        csf_d_par_path, csf_d_par_shape, csf_d_par_dtype,
+        f_ins_path, f_ins_shape, f_ins_dtype,
     ) = memmap_info
+
+    # Apply diffusivity ranges inside the worker so it also works with spawn
+    set_diffusivity_ranges(**diffusivity_cfg)
 
     # Open memmaps in read-write mode
     signals_mm = np.memmap(signals_path, mode="r+", dtype=signals_dtype, shape=signals_shape)
@@ -100,6 +264,13 @@ def generate_batch_to_memmap(
     ufa_wm_mm = np.memmap(ufa_wm_path, mode="r+", dtype=ufa_wm_dtype, shape=ufa_wm_shape)
     ufa_voxel_mm = np.memmap(ufa_voxel_path, mode="r+", dtype=ufa_voxel_dtype, shape=ufa_voxel_shape)
     fraction_array_mm = np.memmap(fraction_array_path, mode="r+", dtype=fraction_array_dtype, shape=fraction_array_shape)
+    # Additional DKI memmaps
+    wm_disp_mm = np.memmap(wm_disp_path, mode="r+", dtype=wm_disp_dtype, shape=wm_disp_shape)
+    wm_d_par_mm = np.memmap(wm_d_par_path, mode="r+", dtype=wm_d_par_dtype, shape=wm_d_par_shape)
+    wm_d_perp_mm = np.memmap(wm_d_perp_path, mode="r+", dtype=wm_d_perp_dtype, shape=wm_d_perp_shape)
+    gm_d_par_mm = np.memmap(gm_d_par_path, mode="r+", dtype=gm_d_par_dtype, shape=gm_d_par_shape)
+    csf_d_par_mm = np.memmap(csf_d_par_path, mode="r+", dtype=csf_d_par_dtype, shape=csf_d_par_shape)
+    f_ins_mm = np.memmap(f_ins_path, mode="r+", dtype=f_ins_dtype, shape=f_ins_shape)
 
     for i in range(batch_size):
         idx = start_idx + i
@@ -119,6 +290,12 @@ def generate_batch_to_memmap(
             ufa_wm_mm[idx],
             ufa_voxel_mm[idx],
             fraction_array_mm[idx],
+            wm_disp_mm[idx],
+            wm_d_par_mm[idx],
+            wm_d_perp_mm[idx],
+            gm_d_par_mm[idx],
+            csf_d_par_mm[idx],
+            f_ins_mm[idx],
         ) = res
 
     # Flush memmaps
@@ -134,6 +311,12 @@ def generate_batch_to_memmap(
     ufa_wm_mm.flush()
     ufa_voxel_mm.flush()
     fraction_array_mm.flush()
+    wm_disp_mm.flush()
+    wm_d_par_mm.flush()
+    wm_d_perp_mm.flush()
+    gm_d_par_mm.flush()
+    csf_d_par_mm.flush()
+    f_ins_mm.flush()
 
     return batch_size
 
@@ -142,11 +325,12 @@ def main():
     # -------------------------------------------------------------------------
     # Configuration
     # -------------------------------------------------------------------------
-    output_dir = "/home/athshah/Phi/FORCE/simulated_data_cython"
+    output_dir = "/home/athshah/Phi/FORCE/simulated_data_fixed"
     os.makedirs(output_dir, exist_ok=True)
 
     run_dki = False
     run_msdki = False
+    run_analytical_dki = False  # Use analytical DKI (multi_tensor_dki) for comparison
 
     num_simulations = 500_000
     dtype_config = np.float32
@@ -155,6 +339,14 @@ def main():
 
     BATCH_SIZE = 1000
     DTI_BATCH_SIZE = 2000  # batch size for DTI fitting
+
+    # Diffusivity ranges (mm^2/s) — adjust as needed
+    diffusivity_cfg = {
+        "wm_d_par_range": (2.0e-3, 3.0e-3),
+        "wm_d_perp_range": (0.3e-3, 1.5e-3),
+        "gm_d_iso_range": 1.0e-3,
+        "csf_d": 3.0e-3,
+    }
 
     print_mem_usage("start of script")
 
@@ -209,6 +401,13 @@ def main():
     ufa_wm_mm = create_memmap("ufa_wm", dtype_config, (num_simulations,))
     ufa_voxel_mm = create_memmap("ufa_voxel", dtype_config, (num_simulations,))
     fraction_array_mm = create_memmap("fraction_array", dtype_config, (num_simulations, 3))
+    # Additional memmaps for analytical DKI
+    wm_disp_mm = create_memmap("wm_disp", dtype_config, (num_simulations,))
+    wm_d_par_mm = create_memmap("wm_d_par", dtype_config, (num_simulations,))
+    wm_d_perp_mm = create_memmap("wm_d_perp", dtype_config, (num_simulations,))
+    gm_d_par_mm = create_memmap("gm_d_par", dtype_config, (num_simulations,))
+    csf_d_par_mm = create_memmap("csf_d_par", dtype_config, (num_simulations,))
+    f_ins_mm = create_memmap("f_ins", dtype_config, (num_simulations, 3))
 
     memmaps = [
         signals_mm,
@@ -223,9 +422,18 @@ def main():
         ufa_wm_mm,
         ufa_voxel_mm,
         fraction_array_mm,
+        wm_disp_mm,
+        wm_d_par_mm,
+        wm_d_perp_mm,
+        gm_d_par_mm,
+        csf_d_par_mm,
+        f_ins_mm,
     ]
 
     print_mem_usage("after memmap allocation")
+
+    # Apply diffusivity ranges for the parent process
+    set_diffusivity_ranges(**diffusivity_cfg)
 
     # -------------------------------------------------------------------------
     # Run simulations in batches into memmaps using OpenMP-style threading
@@ -244,7 +452,7 @@ def main():
 
     print(f"Running {total_batches} batches with {num_cpus} processes (multiprocessing)")
 
-    # Pack memmap info (paths, shapes, dtypes) for workers to reopen
+    # Pack memmap info for workers to reopen
     memmap_info = (
         memmap_paths["signals"], (num_simulations, n_bvals), dtype_config,
         memmap_paths["labels"], (num_simulations, n_dirs), label_dtype,
@@ -258,11 +466,16 @@ def main():
         memmap_paths["ufa_wm"], (num_simulations,), dtype_config,
         memmap_paths["ufa_voxel"], (num_simulations,), dtype_config,
         memmap_paths["fraction_array"], (num_simulations, 3), dtype_config,
+        # Additional DKI parameters
+        memmap_paths["wm_disp"], (num_simulations,), dtype_config,
+        memmap_paths["wm_d_par"], (num_simulations,), dtype_config,
+        memmap_paths["wm_d_perp"], (num_simulations,), dtype_config,
+        memmap_paths["gm_d_par"], (num_simulations,), dtype_config,
+        memmap_paths["csf_d_par"], (num_simulations,), dtype_config,
+        memmap_paths["f_ins"], (num_simulations, 3), dtype_config,
     )
 
-    # Use ProcessPoolExecutor (standard library) for true parallelism
-    # Each process opens memmaps by path and writes directly
-    # Progress tracked per batch completion (like Ray)
+    
     with tqdm(total=num_simulations, desc="Simulating (multiprocessing)") as pbar:
         with ProcessPoolExecutor(max_workers=num_cpus) as executor:
             # Submit all batches
@@ -280,6 +493,7 @@ def main():
                     wm_threshold,
                     tortuisity,
                     memmap_info,
+                    diffusivity_cfg,
                 ): (start_idx, bs)
                 for start_idx, bs in batch_specs
             }
@@ -360,6 +574,87 @@ def main():
         ufa_smt2 = msdki_fit.smt2uFA.astype(dtype_config)
     else:
         ufa_smt2 = np.zeros(num_simulations, dtype=dtype_config)
+
+    # -------------------------------------------------------------------------
+    # Analytical DKI computation
+    # -------------------------------------------------------------------------
+    
+    if run_analytical_dki:
+        print(f"Running analytical DKI computation with {num_cpus} processes...")
+        
+        # Create output memmaps for analytical DKI
+        ak_analytical_mm = create_memmap("ak_analytical", dtype_config, (num_simulations,))
+        rk_analytical_mm = create_memmap("rk_analytical", dtype_config, (num_simulations,))
+        mk_analytical_mm = create_memmap("mk_analytical", dtype_config, (num_simulations,))
+        kfa_analytical_mm = create_memmap("kfa_analytical", dtype_config, (num_simulations,))
+        
+        # Build batch specs for DKI computation
+        DKI_BATCH_SIZE = 500
+        num_dki_batches_full = num_simulations // DKI_BATCH_SIZE
+        dki_remainder = num_simulations % DKI_BATCH_SIZE
+        total_dki_batches = num_dki_batches_full + (1 if dki_remainder > 0 else 0)
+        
+        dki_batch_specs = []
+        current_start = 0
+        for batch_idx in range(total_dki_batches):
+            bs = DKI_BATCH_SIZE if batch_idx < num_dki_batches_full else dki_remainder
+            dki_batch_specs.append((current_start, bs))
+            current_start += bs
+        
+        # Pack input memmap info
+        input_memmap_info = (
+            memmap_paths["num_fibers"], (num_simulations,), dtype_config,
+            memmap_paths["labels"], (num_simulations, n_dirs), label_dtype,
+            memmap_paths["wm_disp"], (num_simulations,), dtype_config,
+            memmap_paths["wm_d_par"], (num_simulations,), dtype_config,
+            memmap_paths["wm_d_perp"], (num_simulations,), dtype_config,
+            memmap_paths["gm_d_par"], (num_simulations,), dtype_config,
+            memmap_paths["csf_d_par"], (num_simulations,), dtype_config,
+            memmap_paths["wm_fraction"], (num_simulations,), dtype_config,
+            memmap_paths["gm_fraction"], (num_simulations,), dtype_config,
+            memmap_paths["csf_fraction"], (num_simulations,), dtype_config,
+            memmap_paths["fraction_array"], (num_simulations, 3), dtype_config,
+            memmap_paths["f_ins"], (num_simulations, 3), dtype_config,
+        )
+        
+        # Pack output memmap info
+        output_memmap_info = (
+            memmap_paths["ak_analytical"], (num_simulations,), dtype_config,
+            memmap_paths["rk_analytical"], (num_simulations,), dtype_config,
+            memmap_paths["mk_analytical"], (num_simulations,), dtype_config,
+            memmap_paths["kfa_analytical"], (num_simulations,), dtype_config,
+        )
+        
+        with tqdm(total=num_simulations, desc="Analytical DKI (parallel)") as pbar:
+            with ProcessPoolExecutor(max_workers=num_cpus) as executor:
+                futures = {
+                    executor.submit(
+                        compute_analytical_dki_batch,
+                        start_idx,
+                        bs,
+                        target_sphere,
+                        bingham_sf,
+                        odi_list,
+                        bvals,
+                        bvecs,
+                        input_memmap_info,
+                        output_memmap_info,
+                    ): (start_idx, bs)
+                    for start_idx, bs in dki_batch_specs
+                }
+                
+                for future in as_completed(futures):
+                    batch_size_done = future.result()
+                    pbar.update(batch_size_done)
+        
+        # Use analytical values
+        ak_arr = np.array(ak_analytical_mm)
+        rk_arr = np.array(rk_analytical_mm)
+        mk_arr = np.array(mk_analytical_mm)
+        kfa_arr = np.array(kfa_analytical_mm)
+        
+        # Add to memmaps list for cleanup
+        memmaps.extend([ak_analytical_mm, rk_analytical_mm, mk_analytical_mm, kfa_analytical_mm])
 
     print_mem_usage("after metrics (DTI / DKI / msdki)")
 

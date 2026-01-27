@@ -14,6 +14,49 @@ import faster_multitensor
 ctypedef cnp.float64_t DTYPE_t
 ctypedef cnp.uint8_t LABEL_t
 
+# Diffusivity ranges (configurable via set_diffusivity_ranges)
+cdef double WM_D_PAR_MIN = 2.0e-3
+cdef double WM_D_PAR_MAX = 3.0e-3
+cdef double WM_D_PERP_MIN = 0.3e-3
+cdef double WM_D_PERP_MAX = 1.5e-3
+cdef double GM_D_MIN = 0.7e-3
+cdef double GM_D_MAX = 1.2e-3
+cdef double CSF_D = 3.0e-3
+
+
+def set_diffusivity_ranges(
+    wm_d_par_range=(2.0e-3, 3.0e-3),
+    wm_d_perp_range=(0.3e-3, 1.5e-3),
+    gm_d_iso_range=(0.7e-3, 1.2e-3),
+    csf_d=3.0e-3,
+):
+    """
+    Update the diffusivity ranges used by the simulators.
+    Arguments accept either a single float (fixed value) or a (min, max) tuple.
+    Values are in mm^2/s; csf_d is always a single isotropic value.
+    """
+    global WM_D_PAR_MIN, WM_D_PAR_MAX, WM_D_PERP_MIN, WM_D_PERP_MAX
+    global GM_D_MIN, GM_D_MAX, CSF_D
+
+    def _validate_val_or_pair(name, val):
+        # Allow scalar (fixed) or (min, max)
+        try:
+            # Treat like tuple only if it has len==2
+            if hasattr(val, "__len__") and len(val) == 2:
+                lo, hi = float(val[0]), float(val[1])
+            else:
+                lo = hi = float(val)
+        except Exception as e:
+            raise ValueError(f"{name} must be a float or (min, max) pair") from e
+        if lo > hi:
+            raise ValueError(f"{name} min must be <= max")
+        return lo, hi
+
+    WM_D_PAR_MIN, WM_D_PAR_MAX = _validate_val_or_pair("wm_d_par_range", wm_d_par_range)
+    WM_D_PERP_MIN, WM_D_PERP_MAX = _validate_val_or_pair("wm_d_perp_range", wm_d_perp_range)
+    GM_D_MIN, GM_D_MAX = _validate_val_or_pair("gm_d_iso_range", gm_d_iso_range)
+    CSF_D = float(csf_d)
+
 
 cdef inline double get_dperp_extra(double d_par, double f_intra) noexcept:
     return d_par * (1.0 - f_intra) / (1.0 + f_intra)
@@ -28,6 +71,25 @@ cdef inline double fa_stick_zeppelin(double d_par, double d_perp, double f_intra
     cdef double num = d_par - e * d_perp
     cdef double den = (d_par * d_par + 2.0 * (e * e) * d_perp * d_perp) ** 0.5
     return num / den
+
+
+cdef inline double _sample_uniform_or_fixed(double lo, double hi) noexcept:
+    if lo == hi:
+        return lo  # fixed value, avoid RNG cost
+    else:
+        return float(np.random.uniform(lo, hi))
+
+
+cdef inline double sample_wm_d_par() noexcept:
+    return _sample_uniform_or_fixed(WM_D_PAR_MIN, WM_D_PAR_MAX)
+
+
+cdef inline double sample_wm_d_perp() noexcept:
+    return _sample_uniform_or_fixed(WM_D_PERP_MIN, WM_D_PERP_MAX)
+
+
+cdef inline double sample_gm_d_iso() noexcept:
+    return _sample_uniform_or_fixed(GM_D_MIN, GM_D_MAX)
 
 
 cdef Py_ssize_t _closest_direction(
@@ -69,7 +131,7 @@ cpdef tuple generate_single_fiber(
         Py_ssize_t n_dirs = target_sphere.shape[0]
         double f_intra = float(np.random.uniform(0.6, 0.9))
         double f_extra = 1.0 - f_intra
-        double d_par = float(np.random.uniform(2.0e-3, 3.0e-3))
+        double d_par = sample_wm_d_par()
         double d_perp_extra
         double S0 = 100.0
         int idx
@@ -77,7 +139,7 @@ cpdef tuple generate_single_fiber(
     if tortuisity:
         d_perp_extra = get_dperp_extra(d_par, f_intra)
     else:
-        d_perp_extra = float(np.random.uniform(0.3e-3, 1.5e-3))
+        d_perp_extra = sample_wm_d_perp()
 
     labels = np.zeros(n_dirs, dtype=np.uint8)
 
@@ -149,11 +211,11 @@ cpdef tuple generate_two_fibers(
     fiber_frac1 = float(np.random.uniform(0.2, 0.8))
     fiber_fractions = [fiber_frac1, 1.0 - fiber_frac1]
 
-    d_par = float(np.random.uniform(2.0e-3, 3.0e-3))
+    d_par = sample_wm_d_par()
     if tortuisity:
         d_perp_extra = get_dperp_extra(d_par, float(f_in[0]))
     else:
-        d_perp_extra = float(np.random.uniform(0.3e-3, 1.5e-3))
+        d_perp_extra = sample_wm_d_perp()
 
     labels = np.zeros(n_dirs, dtype=np.uint8)
 
@@ -249,11 +311,11 @@ cpdef tuple generate_three_fibers(
     while np.any(fiber_fracs < 0.2):
         fiber_fracs = np.random.dirichlet([1.0, 1.0, 1.0]).astype(np.float64)
 
-    d_par = float(np.random.uniform(2.0e-3, 3.0e-3))
+    d_par = sample_wm_d_par()
     if tortuisity:
         d_perp_extra = get_dperp_extra(d_par, float(f_in[0]))
     else:
-        d_perp_extra = float(np.random.uniform(0.3e-3, 1.5e-3))
+        d_perp_extra = sample_wm_d_perp()
 
     labels = np.zeros(n_dirs, dtype=np.uint8)
 
@@ -353,7 +415,7 @@ cpdef tuple create_gm_signal(
 ):
     cdef:
         Py_ssize_t n_dirs = target_sphere.shape[0]
-        double d = float(np.random.uniform(0.7e-3, 1.2e-3))
+        double d = sample_gm_d_iso()
 
     signal = np.exp(-bvals * d) * 100.0
     labels = np.zeros(n_dirs, dtype=np.uint8)
@@ -378,7 +440,7 @@ cpdef tuple create_csf_signal(
 ):
     cdef:
         Py_ssize_t n_dirs = target_sphere.shape[0]
-        double d = 3.0e-3
+        double d = CSF_D
 
     signal = np.exp(-bvals * d) * 100.0
     labels = np.zeros(n_dirs, dtype=np.uint8)
@@ -481,6 +543,11 @@ cpdef tuple create_mixed_signal(
     for k in range(min(3, len(fracs))):
         frac_arr[k] = float(fracs[k])
 
+    # f_ins array (up to 3 fibers)
+    f_ins_arr = np.zeros(3, dtype=np.float32)
+    for k in range(min(3, len(f_ins))):
+        f_ins_arr[k] = float(f_ins[k])
+
     return (
         combined_signal,                  # 0
         wm_label,                         # 1
@@ -494,4 +561,11 @@ cpdef tuple create_mixed_signal(
         float(ufa_wm),                    # 9
         float(ufa_voxel),                 # 10
         frac_arr,                         # 11
+        # Additional parameters for analytical DKI
+        float(wm_disp),                   # 12 - dispersion index
+        float(wm_d_par),                  # 13 - WM parallel diffusivity
+        float(wm_d_perp),                 # 14 - WM perpendicular diffusivity
+        float(gm_d_par),                  # 15 - GM isotropic diffusivity
+        float(csf_d_par),                 # 16 - CSF isotropic diffusivity
+        f_ins_arr,                        # 17 - intra-axonal fractions per fiber
     )
