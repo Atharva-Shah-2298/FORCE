@@ -3,10 +3,13 @@
 # cython: initializedcheck=False, nonecheck=False
 
 """
-High-performance k-NN search using:
-- SciPy BLAS (sgemm) for large batch matrix multiplication
+High-performance k-NN search using FAISS-style streaming approach:
+- Processes database in chunks to bound memory usage
+- SciPy BLAS (sgemm) for fast matrix multiplication
 - FAISS SIMD (AVX2/FMA) for small batches
-- Cython heap with prange for parallel top-k selection
+- Streaming heap updates for memory-efficient top-k selection
+
+Memory usage: O(n_queries * chunk_size) instead of O(n_queries * n_database)
 """
 
 import numpy as np
@@ -14,7 +17,6 @@ cimport numpy as cnp
 cimport cython
 from cython.parallel cimport prange
 from libc.stdlib cimport malloc, free
-from libc.string cimport memset
 
 # Import SciPy BLAS
 from scipy.linalg.cython_blas cimport sgemm
@@ -26,12 +28,20 @@ cdef extern from "src/distances.h" namespace "faiss" nogil:
     float fvec_norm_L2sqr(const float* x, size_t d)
 
 # Import heap functions
-from heap cimport select_top_k_parallel
+from heap cimport (
+    select_top_k_parallel,
+    heap_init_parallel,
+    heap_update_batch_parallel,
+    heap_finalize_parallel
+)
 
 
-# Threshold for choosing between SIMD and BLAS
-# Below this, SIMD is faster (less overhead)
-# Above this, BLAS is faster (better optimization)
+# Database chunk size for streaming (FAISS-style)
+# This bounds memory to: n_queries * CHUNK_SIZE * 4 bytes
+# With 2000 queries and 8192 chunk: ~64 MB per batch (vs 4GB for full matrix)
+cdef size_t DB_CHUNK_SIZE = 8192
+
+# Threshold for choosing between SIMD and BLAS for small operations
 cdef size_t BLAS_THRESHOLD = 500
 
 
@@ -55,7 +65,6 @@ cdef void compute_distances_simd(
     # Parallel loop over queries
     for i in prange(n_queries, schedule='static', nogil=True):
         for j in range(n_database):
-            # Call FAISS SIMD-optimized inner product (AVX2/FMA)
             distances[i * n_database + j] = fvec_inner_product(
                 &queries[i, 0],
                 &database[j, 0],
@@ -76,13 +85,6 @@ cdef void compute_distances_blas(
     Used for large batches where BLAS is highly optimized.
 
     Computes: distances_out[i, j] = queries[i, :] . database[j, :]
-
-    C-contiguous trick: A C-contiguous (m, n) matrix is equivalent to
-    a Fortran-contiguous (n, m) transposed matrix in memory. So BLAS
-    sees queries(nq, d) as queries_f^T where queries_f is F(d, nq),
-    and similarly for database. We compute:
-        result_f = database_f^T @ queries_f
-    which gives a C-contiguous (nq, nd) result.
     """
     cdef int nd = database.shape[0]
     cdef int nq = queries.shape[0]
@@ -90,17 +92,16 @@ cdef void compute_distances_blas(
 
     cdef float alpha = 1.0
     cdef float beta = 0.0
-    cdef char trans_a = b'T'  # Transpose database_f to get (nd, d)
-    cdef char trans_b = b'N'  # queries_f as-is (d, nq)
+    cdef char trans_a = b'T'
+    cdef char trans_b = b'N'
 
-    cdef int m = nd   # rows of op(A)
-    cdef int n = nq   # cols of op(B)
-    cdef int kk = d   # inner dimension
-    cdef int lda = d   # leading dim of database_f (d, nd)
-    cdef int ldb = d   # leading dim of queries_f (d, nq)
-    cdef int ldc = nd  # leading dim of result_f (nd, nq)
+    cdef int m = nd
+    cdef int n = nq
+    cdef int kk = d
+    cdef int lda = d
+    cdef int ldb = d
+    cdef int ldc = nd
 
-    # sgemm expects non-const float* (Fortran convention), cast away const
     cdef float* db_ptr = <float*>&database[0, 0]
     cdef float* q_ptr = <float*>&queries[0, 0]
 
@@ -124,7 +125,7 @@ cdef void compute_distances_blas(
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
-cdef void knn_inner_product(
+cdef void knn_inner_product_streaming(
     const float[:, ::1] queries,
     const float[:, ::1] database,
     size_t k,
@@ -132,43 +133,94 @@ cdef void knn_inner_product(
     long[:, ::1] indices_out
 ) noexcept nogil:
     """
-    Main k-NN search function.
-
-    Chooses between SIMD and BLAS based on batch size,
-    then uses parallel heap for top-k selection.
+    FAISS-style streaming k-NN search.
+    
+    Memory-efficient approach:
+    1. Initialize top-k heaps for all queries
+    2. Process database in chunks of DB_CHUNK_SIZE
+    3. For each chunk: compute distances, update heaps
+    4. Finalize heaps (sort in descending order)
+    
+    Memory usage: O(n_queries * DB_CHUNK_SIZE) instead of O(n_queries * n_database)
+    For 2000 queries, 500k database, 8192 chunk size:
+    - Old: 2000 * 500000 * 4 = 4 GB
+    - New: 2000 * 8192 * 4 = 64 MB (62x reduction)
     """
     cdef size_t n_queries = queries.shape[0]
     cdef size_t n_database = database.shape[0]
     cdef size_t d = queries.shape[1]
-    cdef size_t batch_size = n_queries * n_database
-
+    
+    cdef size_t chunk_start, chunk_end, chunk_size
+    cdef size_t batch_size
     cdef float* distances = NULL
-    cdef bint use_simd = batch_size < BLAS_THRESHOLD
-
+    cdef bint use_simd
+    
+    # Step 1: Initialize heaps with -inf values
+    heap_init_parallel(
+        n_queries,
+        k,
+        &distances_out[0, 0],
+        &indices_out[0, 0]
+    )
+    
+    # Allocate buffer for one chunk worth of distances
+    # This is the key memory optimization - only allocate for chunk, not full DB
+    cdef size_t max_chunk = DB_CHUNK_SIZE
+    if max_chunk > n_database:
+        max_chunk = n_database
+    
+    distances = <float*>malloc(n_queries * max_chunk * sizeof(float))
+    if distances == NULL:
+        with gil:
+            raise MemoryError("Cannot allocate chunk distance buffer")
+    
     try:
-        # Allocate distance matrix
-        distances = <float*>malloc(batch_size * sizeof(float))
-        if distances == NULL:
-            with gil:
-                raise MemoryError("Cannot allocate distance matrix")
-
-        if use_simd:
-            # Small batch: Use FAISS SIMD (less overhead)
-            compute_distances_simd(queries, database, distances)
-        else:
-            # Large batch: Use SciPy BLAS (highly optimized)
-            compute_distances_blas(queries, database, distances)
-
-        # Select top-k using parallel heap
-        select_top_k_parallel(
-            distances,
+        # Step 2: Process database in chunks
+        chunk_start = 0
+        while chunk_start < n_database:
+            chunk_end = chunk_start + DB_CHUNK_SIZE
+            if chunk_end > n_database:
+                chunk_end = n_database
+            chunk_size = chunk_end - chunk_start
+            
+            batch_size = n_queries * chunk_size
+            use_simd = batch_size < BLAS_THRESHOLD
+            
+            # Compute distances for this chunk
+            if use_simd:
+                compute_distances_simd(
+                    queries,
+                    database[chunk_start:chunk_end],
+                    distances
+                )
+            else:
+                compute_distances_blas(
+                    queries,
+                    database[chunk_start:chunk_end],
+                    distances
+                )
+            
+            # Update heaps with this chunk's distances
+            heap_update_batch_parallel(
+                distances,
+                n_queries,
+                chunk_size,
+                chunk_start,  # offset for global indices
+                k,
+                &distances_out[0, 0],
+                &indices_out[0, 0]
+            )
+            
+            chunk_start = chunk_end
+        
+        # Step 3: Finalize heaps (sort in descending order)
+        heap_finalize_parallel(
             n_queries,
-            n_database,
             k,
             &distances_out[0, 0],
             &indices_out[0, 0]
         )
-
+    
     finally:
         if distances != NULL:
             free(distances)
@@ -184,11 +236,11 @@ def search_flat_ip(
     """
     Search for k-nearest neighbors using inner product.
 
-    Automatically chooses between:
+    Uses FAISS-style streaming approach:
+    - Processes database in chunks to bound memory usage
     - FAISS SIMD (AVX2/FMA) for small batches
     - SciPy BLAS (sgemm) for large batches
-
-    Then uses parallel Cython heap for top-k selection.
+    - Streaming heap updates for memory-efficient top-k
 
     Parameters
     ----------
@@ -229,9 +281,9 @@ def search_flat_ip(
     cdef float[:, ::1] distances_view = distances
     cdef long[:, ::1] indices_view = indices
 
-    # Call optimized search
+    # Call streaming search
     with nogil:
-        knn_inner_product(
+        knn_inner_product_streaming(
             queries,
             database,
             k,
