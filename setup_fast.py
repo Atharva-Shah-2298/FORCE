@@ -79,13 +79,6 @@ extensions = [
         extra_link_args=link_args
     ),
     Extension(
-        "cython_matching",
-        sources=["cython_matching.pyx"],
-        include_dirs=[np.get_include()],
-        extra_compile_args=compile_args,
-        extra_link_args=link_args
-    ),
-    Extension(
         "heap",
         sources=["heap.pyx"],
         include_dirs=[np.get_include()],
