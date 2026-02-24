@@ -36,6 +36,7 @@ First, install all required Python packages:
 
 ```bash
 pip install -r requirements.txt
+python setup_fast.py build_ext --inplace
 ```
 
 ### 2. Run the Demo Notebook
