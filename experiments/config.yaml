@@ -1,0 +1,42 @@
+# FORCE stability-experiment configuration.
+# Set the data paths below to your own preprocessed single subject
+# (the paper used HCP subject 165840, shells 0/1000/2000/3000).
+
+# Input diffusion data
+dwi: /path/to/subject/dwi.nii.gz
+bvals: /path/to/subject/bvals
+bvecs: /path/to/subject/bvecs
+mask: /path/to/subject/brain_mask.nii.gz
+
+# Where experiment outputs are written
+output_root: ./output
+
+# White-matter mask: used directly if it exists, else FA > threshold from a DTI fit
+wm_mask_path: /path/to/subject/wm_mask.nii.gz
+wm_fa_threshold: 0.2
+
+# FORCE defaults
+num_simulations: 500000
+n_neighbors: 50
+posterior_beta: 2000.0
+penalty: 1.0e-5
+b0_threshold: 50
+bvecs_tol: 0.01
+
+# Exp 2: library resampling
+exp2_n_trials: 5
+
+# Exp 3: input noise
+exp3_n_noise: 20
+
+# Exp 4: K sweep
+exp4_k_values: [1, 5, 10, 25, 50, 100, 200, 500]
+
+# Exp 5: beta sweep
+exp5_beta_values: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]
+
+# Exp 6: split-half
+exp6_n_splits: 10
+
+# Python interpreter used by run_all.sh
+python: python

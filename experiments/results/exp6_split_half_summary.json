@@ -1,0 +1,42 @@
+{
+  "fa": {
+    "half_diff_mean": 0.021999381482601166,
+    "half_diff_median": 0.01528056152164936,
+    "half_diff_p95": 0.060781750828027725
+  },
+  "md": {
+    "half_diff_mean": 0.006967954803258181,
+    "half_diff_median": 0.004772086627781391,
+    "half_diff_p95": 0.019399533048272133
+  },
+  "nd": {
+    "half_diff_mean": 0.02975223958492279,
+    "half_diff_median": 0.021917104721069336,
+    "half_diff_p95": 0.07636653631925583
+  },
+  "dispersion": {
+    "half_diff_mean": 0.027570202946662903,
+    "half_diff_median": 0.021406743675470352,
+    "half_diff_p95": 0.06707338988780975
+  },
+  "rd": {
+    "half_diff_mean": 0.006203484255820513,
+    "half_diff_median": 0.004340590909123421,
+    "half_diff_p95": 0.01744556427001953
+  },
+  "wm_fraction": {
+    "half_diff_mean": 0.02935102954506874,
+    "half_diff_median": 0.02335468679666519,
+    "half_diff_p95": 0.06915505975484848
+  },
+  "num_fibers": {
+    "half_diff_mean": 0.10197030752897263,
+    "half_diff_median": 0.07911490648984909,
+    "half_diff_p95": 0.26054584980010986
+  },
+  "ufa_voxel": {
+    "half_diff_mean": 0.02845129743218422,
+    "half_diff_median": 0.022554267197847366,
+    "half_diff_p95": 0.06730476766824722
+  }
+}

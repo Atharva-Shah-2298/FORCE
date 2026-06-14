@@ -1,10 +1,14 @@
-numpy==1.26.4
-matplotlib
-ray
-tqdm
-dipy
+# Dependencies for the FORCE paper experiments.
+# FORCE itself ships with DIPY (>= 1.13) as dipy.reconst.force.
+dipy>=1.13
+numpy
 scipy
-psutil
-faiss-cpu
-cython
+matplotlib
+nibabel
+pandas
+pyyaml
+tqdm
 
+# Optional:
+#   ray            -> parallel FORCE fitting (engine="ray")
+#   dmri-amico     -> AMICO-NODDI baseline (recovery/ and harmonization/)
