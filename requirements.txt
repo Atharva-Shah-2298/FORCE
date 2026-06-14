@@ -1,6 +1,6 @@
 # Dependencies for the FORCE paper experiments.
-# FORCE itself ships with DIPY (>= 1.13) as dipy.reconst.force.
-dipy>=1.13
+# FORCE itself ships with DIPY (>= 1.12) as dipy.reconst.force.
+dipy>=1.12
 numpy
 scipy
 matplotlib

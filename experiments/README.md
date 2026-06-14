@@ -69,3 +69,10 @@ FORCE against CSA, GQI and CSD (paper Fig. 6f,g). It uses a small `faster_multit
 Cython extension and the `utils/` helpers for signal simulation; build it once with
 `python setup.py build_ext --inplace`. See
 [`synthetic_angle_accuracy/README.md`](synthetic_angle_accuracy/README.md).
+
+## Reference partial-volume maps (MRtrix3)
+
+The tissue partial-volume maps that FORCE's WM/GM/CSF fractions are compared
+against were generated with MRtrix3 (Dhollander response → MSMT-CSD → stacked
+volume-fraction map). The exact CLI pipeline is in
+[`mrtrix3_pve/README.md`](mrtrix3_pve/README.md).

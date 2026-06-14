@@ -1,9 +1,5 @@
 # FORCE: FORward modeling for Complex microstructure Estimation
 
-<p align="center">
-  <img src="docs/img/capabilities.png" alt="FORCE capabilities" width="760"/>
-</p>
-
 FORCE is a forward-modeling framework for diffusion MRI. Instead of inverting the
 measured signal into a narrow parametric model, FORCE simulates a large library of
 biologically plausible intra-voxel fiber configurations and tissue compositions,
@@ -28,12 +24,12 @@ see below.
 
 ## FORCE is in DIPY
 
-FORCE ships with [DIPY](https://dipy.org) (≥ 1.13) as `dipy.reconst.force`, with a
+FORCE ships with [DIPY](https://dipy.org) (≥ 1.12) as `dipy.reconst.force`, with a
 full tutorial here:
 **https://docs.dipy.org/dev/examples_built/reconstruction/reconst_force.html**
 
 ```bash
-pip install "dipy>=1.13"
+pip install "dipy>=1.12"
 ```
 
 ### Python API
@@ -168,6 +164,7 @@ DIPY API. See [`experiments/README.md`](experiments/README.md) for the full inde
 | [`recovery/`](experiments/recovery/) | Parameter recovery vs a separated generator | validation |
 | [`harmonization/`](experiments/harmonization/) | Cross-scanner reproducibility (ICC, CoV) | Fig. 6b,c |
 | [`synthetic_angle_accuracy/`](experiments/synthetic_angle_accuracy/) | Angular resolution + fiber count | Fig. 6f,g |
+| [`mrtrix3_pve/`](experiments/mrtrix3_pve/) | MRtrix3 MSMT-CSD partial-volume reference maps (CLI) | tissue fractions |
 
 ```
 .
