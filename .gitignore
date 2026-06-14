@@ -1,5 +1,8 @@
 __pycache__/
 *.py[cod]
+*.so
+build/
+experiments/synthetic_angle_accuracy/faster_multitensor.c
 .ipynb_checkpoints/
 .DS_Store
 

@@ -65,7 +65,7 @@ comparisons require the `dmri-amico` package.
 [`simulation_with_dispersion.ipynb`](synthetic_angle_accuracy/simulation_with_dispersion.ipynb)
 simulates two-fiber crossings across angle bins and single/two/three-fiber voxels
 with Rician noise, then measures angular resolution and fiber-count accuracy for
-FORCE against CSA, GQI and CSD (paper Fig. 6f,g). The notebook is self-contained
-and runs end-to-end on the DIPY FORCE API (the committed outputs are from a fast
-reduced-size run; increase `N_PER_BIN` and `num_simulations` for paper-scale
-curves).
+FORCE against CSA, GQI and CSD (paper Fig. 6f,g). It uses a small `faster_multitensor`
+Cython extension and the `utils/` helpers for signal simulation; build it once with
+`python setup.py build_ext --inplace`. See
+[`synthetic_angle_accuracy/README.md`](synthetic_angle_accuracy/README.md).
