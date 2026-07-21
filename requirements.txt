@@ -1,6 +1,6 @@
 # Dependencies for the FORCE paper experiments.
 # FORCE itself ships with DIPY (>= 1.12) as dipy.reconst.force.
-dipy>=1.12
+dipy>=1.12          # >=1.13 for experiments/synthetic_angle_accuracy (crossing-angle limit)
 numpy
 scipy
 matplotlib

@@ -62,12 +62,13 @@ comparisons require the `dmri-amico` package.
 
 ## Synthetic angular resolution and fiber count (`synthetic_angle_accuracy/`)
 
-[`simulation_with_dispersion.ipynb`](synthetic_angle_accuracy/simulation_with_dispersion.ipynb)
-simulates two-fiber crossings across angle bins and single/two/three-fiber voxels
-with Rician noise, then measures angular resolution and fiber-count accuracy for
-FORCE against CSA, GQI and CSD (paper Fig. 6f,g). It uses a small `faster_multitensor`
-Cython extension and the `utils/` helpers for signal simulation; build it once with
-`python setup.py build_ext --inplace`. See
+[`run_angle_accuracy.py`](synthetic_angle_accuracy/run_angle_accuracy.py) simulates
+two-fiber crossings across angle bins and single/two/three-fiber voxels with Rician
+noise, then measures angular resolution and fiber-count accuracy for FORCE against
+CSA, GQI and CSD (paper Fig. 6f,g); [`plot_results.py`](synthetic_angle_accuracy/plot_results.py)
+renders the figures. FORCE peaks are taken from the matched simulation via
+`force_peaks`, and the library is built with the crossing-angle limit relaxed so
+shallow crossings are representable — see
 [`synthetic_angle_accuracy/README.md`](synthetic_angle_accuracy/README.md).
 
 ## Reference partial-volume maps (MRtrix3)

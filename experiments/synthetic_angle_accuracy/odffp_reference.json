@@ -1,0 +1,289 @@
+{
+  "_provenance": "ODF-fingerprinting reference curves from the original paper run (Phi/odffp_evaluation_summary*.pkl, Nov 2025). ODFFP is not part of DIPY, so these numbers are reused rather than recomputed. 'per_peak_recall' is the same quantity as peak_detection_rate here: matched true peaks / total true peaks, 20 degree tolerance, 1000 two-fiber voxels per bucket.",
+  "tol_deg": 20.0,
+  "n_per_bucket": 1000,
+  "variants": {
+    "ODFFP": {
+      "source_file": "odffp_evaluation_summary_1e-4.pkl",
+      "results": {
+        "10": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.707,
+            "both_peaks_rate": 0.443
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.6965,
+            "both_peaks_rate": 0.429
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.6335,
+            "both_peaks_rate": 0.331
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.6085,
+            "both_peaks_rate": 0.357
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.6345,
+            "both_peaks_rate": 0.452
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.6035,
+            "both_peaks_rate": 0.39
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.5585,
+            "both_peaks_rate": 0.326
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.5665,
+            "both_peaks_rate": 0.32
+          }
+        },
+        "20": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.798,
+            "both_peaks_rate": 0.601
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.7785,
+            "both_peaks_rate": 0.564
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.74,
+            "both_peaks_rate": 0.501
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.6995,
+            "both_peaks_rate": 0.508
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.6985,
+            "both_peaks_rate": 0.549
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.659,
+            "both_peaks_rate": 0.493
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.585,
+            "both_peaks_rate": 0.387
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.588,
+            "both_peaks_rate": 0.355
+          }
+        },
+        "50": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.8485,
+            "both_peaks_rate": 0.697
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.818,
+            "both_peaks_rate": 0.637
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.7615,
+            "both_peaks_rate": 0.53
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.728,
+            "both_peaks_rate": 0.539
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.73,
+            "both_peaks_rate": 0.604
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.6885,
+            "both_peaks_rate": 0.554
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.605,
+            "both_peaks_rate": 0.421
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.601,
+            "both_peaks_rate": 0.394
+          }
+        },
+        "clean": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.8575,
+            "both_peaks_rate": 0.715
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.828,
+            "both_peaks_rate": 0.656
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.762,
+            "both_peaks_rate": 0.53
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.7305,
+            "both_peaks_rate": 0.538
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.7245,
+            "both_peaks_rate": 0.598
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.7035,
+            "both_peaks_rate": 0.586
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.617,
+            "both_peaks_rate": 0.443
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.5985,
+            "both_peaks_rate": 0.39
+          }
+        }
+      }
+    },
+    "ODFFP (default)": {
+      "source_file": "odffp_evaluation_summary.pkl",
+      "results": {
+        "10": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.7115,
+            "both_peaks_rate": 0.451
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.7005,
+            "both_peaks_rate": 0.434
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.633,
+            "both_peaks_rate": 0.331
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.611,
+            "both_peaks_rate": 0.359
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.6355,
+            "both_peaks_rate": 0.453
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.591,
+            "both_peaks_rate": 0.371
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.556,
+            "both_peaks_rate": 0.32
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.5675,
+            "both_peaks_rate": 0.317
+          }
+        },
+        "20": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.799,
+            "both_peaks_rate": 0.603
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.771,
+            "both_peaks_rate": 0.549
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.7425,
+            "both_peaks_rate": 0.505
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.6995,
+            "both_peaks_rate": 0.506
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.7045,
+            "both_peaks_rate": 0.561
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.6645,
+            "both_peaks_rate": 0.504
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.575,
+            "both_peaks_rate": 0.367
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.5935,
+            "both_peaks_rate": 0.365
+          }
+        },
+        "50": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.8435,
+            "both_peaks_rate": 0.687
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.819,
+            "both_peaks_rate": 0.639
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.7655,
+            "both_peaks_rate": 0.538
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.73,
+            "both_peaks_rate": 0.542
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.7245,
+            "both_peaks_rate": 0.59
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.688,
+            "both_peaks_rate": 0.553
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.6005,
+            "both_peaks_rate": 0.412
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.601,
+            "both_peaks_rate": 0.394
+          }
+        },
+        "clean": {
+          "(10, 20)": {
+            "peak_detection_rate": 0.8585,
+            "both_peaks_rate": 0.717
+          },
+          "(20, 30)": {
+            "peak_detection_rate": 0.8365,
+            "both_peaks_rate": 0.673
+          },
+          "(30, 40)": {
+            "peak_detection_rate": 0.7645,
+            "both_peaks_rate": 0.535
+          },
+          "(40, 50)": {
+            "peak_detection_rate": 0.736,
+            "both_peaks_rate": 0.546
+          },
+          "(50, 60)": {
+            "peak_detection_rate": 0.7215,
+            "both_peaks_rate": 0.59
+          },
+          "(60, 70)": {
+            "peak_detection_rate": 0.699,
+            "both_peaks_rate": 0.576
+          },
+          "(70, 80)": {
+            "peak_detection_rate": 0.598,
+            "both_peaks_rate": 0.405
+          },
+          "(80, 90)": {
+            "peak_detection_rate": 0.6105,
+            "both_peaks_rate": 0.414
+          }
+        }
+      }
+    }
+  }
+}

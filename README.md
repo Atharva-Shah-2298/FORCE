@@ -117,18 +117,6 @@ cross-scanner CoV 18.9% vs 36.2%).
 | --- | --- | --- |
 | <img src="docs/img/results_summary.png" width="260"/> | <img src="docs/img/stability.png" width="260"/> | <img src="docs/img/harmonization.png" width="260"/> |
 
-### Synthetic angular resolution and fiber-count accuracy
-
-On simulated crossings, FORCE achieves the highest and most uniform peak-detection
-rates across angle bins, with a clear advantage at **shallow crossings (10–40°)**
-where CSA/GQI/CSD largely fail; it is also the most accurate at counting fibers in
-multi-fiber voxels. These plots are reproduced by
-[`experiments/synthetic_angle_accuracy/`](experiments/synthetic_angle_accuracy/).
-
-| Angular resolution | Fiber-count (NUFO) accuracy |
-| --- | --- |
-| <img src="docs/img/angle_accuracy.png" width="380"/> | <img src="docs/img/nufo_accuracy.png" width="300"/> |
-
 ### Phantom, ex vivo and clinical data
 
 | DiSCo phantom | Ex vivo mouse | Tumor (glioma) | Parkinson's (BUAN) |
@@ -178,7 +166,7 @@ DIPY API. See [`experiments/README.md`](experiments/README.md) for the full inde
     ├── scripts/               # exp1–exp8
     ├── recovery/              # parameter-recovery experiment
     ├── harmonization/         # cross-scanner reproducibility
-    └── synthetic_angle_accuracy/   # angular-resolution / NUFO notebook
+    └── synthetic_angle_accuracy/   # angular-resolution / NUFO scripts
 ```
 
 ---
