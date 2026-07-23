@@ -1,30 +1,31 @@
-# Monte Carlo (true-physics) diffusion phantom
+# Microstructure recovery on a Monte Carlo (true-physics) phantom
 
-FORCE recovery tested against a phantom whose signal comes from an **actual
-random-walk diffusion simulation** (GPU, [disimpy](https://github.com/kerkelae/disimpy))
-inside packed impermeable cylinders — not from any analytic compartment model.
-The signal carries true restricted (intra-axonal) and hindered (extra-axonal)
-diffusion physics, so recovering microstructure with FORCE is an honest,
-out-of-model test rather than a self-consistent forward-model check.
+FORCE microstructure recovery compared against **DTI, DKI and AMICO-NODDI** on a
+phantom whose signal comes from an actual GPU random-walk diffusion simulation
+([disimpy](https://github.com/kerkelae/disimpy)) inside packed impermeable
+cylinders — not from any analytic compartment model. Because the signal carries
+true restricted (intra-axonal) and hindered (extra-axonal) physics that no
+forward model produced, recovering microstructure from it is an honest,
+out-of-model test rather than a self-consistent one.
 
-The full experiment catalogue, ground-truth definitions, and every result table
-are in [`SUMMARY.md`](SUMMARY.md). This file covers only how to install the
-dependencies and run it.
+**Phantom.** N = 400 single-fiber white-matter voxels sampled across healthy
+adult ranges (neurite density / ICVF ∈ [0.40, 0.72], ODI ∈ [0.03, 0.30], free
+water ∈ [0, 0.20], random fiber orientation, axon radius 1 µm). The signal is a
+Monte-Carlo cylinder kernel interpolated over ICVF, Watson-convolved for
+dispersion, plus a free-water compartment, then corrupted with Rician noise at
+SNR {clean, 50, 20, 10}. The same NIfTI is fitted by every method.
 
 ## Requirements
 
 This experiment needs a machine the rest of the repo does not:
 
-- **An NVIDIA GPU with CUDA.** The Monte Carlo walk runs on the GPU via
-  `numba.cuda`; there is no CPU fallback. The phantoms in the paper were run on
-  an RTX A6000 (~7 min per coherent grid).
+- **An NVIDIA GPU with CUDA** — the Monte-Carlo walk runs on the GPU via
+  `numba.cuda`; there is no CPU fallback.
 - **disimpy** (0.3.0), which pulls in `numba` and the CUDA toolchain.
-- **DIPY with FORCE** (`dipy.reconst.force`, DIPY ≥ 1.13) for the matching step.
-- **AMICO** (`dmri-amico`), optional — only for the FORCE-vs-NODDI baseline
-  (`run_amico_bio.py`).
+- **DIPY with FORCE** (`dipy.reconst.force`, DIPY ≥ 1.13).
+- **AMICO** (`dmri-amico`) for the NODDI baseline.
 
-Nothing here runs in CI, and no simulation output is committed — the phantom
-substrates and signals are yours to regenerate.
+No simulation output is committed — the phantom signals are yours to regenerate.
 
 ## Installation
 
@@ -36,70 +37,63 @@ pip install disimpy            # or: pip install git+https://github.com/kerkelae
 python -c "from numba import cuda; print(cuda.detect())"   # confirm the GPU is visible
 ```
 
-If `cuda.detect()` finds no device, fix that before going further — the scripts
-will not fall back to CPU.
+If `cuda.detect()` finds no device, fix that first — the scripts will not fall
+back to CPU.
 
 **NumPy ≥ 2 note.** disimpy 0.3.0 still calls a few removed NumPy aliases
 (`np.trapz`, `np.product`, …). [`np2_shim.py`](np2_shim.py) restores them and is
-imported before disimpy in every generator, so no disimpy patching is needed —
-just keep the shim next to the scripts.
+imported before disimpy, so keep the shim next to the scripts.
 
-DIPY (with the FORCE reconstruction) and, optionally, AMICO:
+DIPY (with FORCE) and AMICO:
 
 ```bash
-pip install "dipy>=1.13"
-pip install dmri-amico          # optional, baseline only
+pip install "dipy>=1.13" dmri-amico
 ```
 
 ## What you must supply
 
-The generators simulate on a **real acquisition protocol** rather than a toy
-scheme, so you need to supply an **HCP-like subject** — a directory holding two
-FSL-format text files, `bvals` and `bvecs` (the paper used a 288-volume,
-b = 0/1/2/3k protocol; any multi-shell HDR/HARDI-style scheme works).
-
-The scripts read that directory from the `FORCE_PROTO` environment variable,
-defaulting to `hcp_subject/` next to the scripts:
-
-```python
-PROTO = os.environ.get("FORCE_PROTO", "hcp_subject")
-```
-
-So either drop your subject's `bvals`/`bvecs` into a `hcp_subject/` folder here,
-or point the variable at your own copy:
+The phantom is simulated on a **real acquisition protocol**, so supply an
+**HCP-like subject** — a directory holding two FSL-format text files, `bvals`
+and `bvecs` (the paper used a 288-volume, b = 0/1/2/3k scheme; any multi-shell
+HARDI protocol works). The scripts read it from the `FORCE_PROTO` environment
+variable, defaulting to `hcp_subject/` next to the scripts:
 
 ```bash
 export FORCE_PROTO=/path/to/your/hcp_subject
 ```
 
-The HCP-slice script (`prior_slice72.py`) additionally needs that subject's DWI
-volume; it reads the subject directory from `FORCE_SUBJECT` (same default).
-
 ## Running it
 
-The core coherent-phantom pipeline (experiment 1 in `SUMMARY.md`):
-
 ```bash
-python validate_substrate.py     # optional: proves the substrate is truly restricted
-python generate_mc_phantom.py    # GPU random walk over an ICVF x radius x free-water grid
-python run_force_mc.py           # FORCE retrieval (K=50, beta=2000) on the MC signals
-python analyze_mc.py             # bias / MAE + calibration vs substrate ground truth
+python bio_phantom.py       # GPU: generate the N=400 phantom + noise -> NIfTI (data_bio/)
+python run_force_bio.py     # FORCE   (K=50, beta=2000)
+python run_amico_bio.py     # AMICO-NODDI baseline
+python run_dti_dki_bio.py   # DTI + DKI baseline
+python analyze_bio.py       # bias / MAE tables + ground-truth-vs-estimate scatter
 ```
 
-Every other experiment follows the same `generate_* -> run_force_* -> analyze_*`
-shape. The mapping from script to experiment and expected result is the table in
-[`SUMMARY.md`](SUMMARY.md); in brief:
+Neurite density is compared on the **voxel scale** — the intra-neurite fraction
+of the whole voxel, the only fair common basis across methods. `FORCE.nd` is
+already voxel-scale; NODDI's `v_ic` is within-tissue, so its voxel neurite
+density is `v_ic * (1 - ISOVF)`.
 
-| substrate generator | FORCE runner | analysis |
-| --- | --- | --- |
-| `packed_cylinders.py` (single fiber) | `run_force_mc.py` | `analyze_mc.py` |
-| `generate_dispersed_phantom.py` (Watson fanning) | `run_force_disp.py` | in-script |
-| `generate_joint_phantom.py` (NDI×ODI×FW) | `run_force_joint.py` | `analyze_joint.py` |
-| `generate_tissue_substrates.py` (WM/GM/CSF, `packed_spheres.py` soma) | `run_force_tissue.py` | `analyze_tissue.py` |
-| `generate_crossing_bending.py` (`crossing_bending.py`) | `run_force_cb.py` | `analyze_cb.py` |
-| `bio_phantom.py` (N=400 biological range) | `run_force_bio.py`, `run_amico_bio.py` | `analyze_bio.py` |
-| `radius_effect.py` (axon-radius sweep) | — | `analyze_radius_effect.py` |
+## Result (from the paper)
 
-All scripts read and write inside this directory (`data/`, `force_out/`,
-`bio_out/`, `figures/`, …). Those output directories are git-ignored and are not
-part of the repository — they are recreated on first run.
+Bias / MAE against the substrate ground truth:
+
+| metric | SNR | FORCE | AMICO-NODDI |
+| --- | --- | --- | --- |
+| neurite density | clean | −0.012 / **0.018** | −0.094 / 0.094 |
+| neurite density | 20 | +0.011 / **0.020** | −0.070 / 0.070 |
+| ODI | clean | −0.002 / **0.010** | −0.036 / 0.036 |
+| ODI | 20 | +0.010 / **0.020** | −0.026 / 0.027 |
+| free water | clean | +0.110 / **0.114** | +0.206 / 0.206 |
+| free water | 20 | +0.105 / **0.110** | +0.222 / 0.222 |
+
+FORCE is more accurate on all three at usable SNR — roughly 5× lower neurite-
+density error than AMICO-NODDI (MAE 0.018 vs 0.094), because AMICO's fixed
+diffusivities and tortuosity constraint push the model mismatch into an
+over-estimated free-water fraction.
+
+All scripts read and write inside this directory (`data_bio/`, `bio_out/`);
+those output directories are git-ignored and recreated on first run.

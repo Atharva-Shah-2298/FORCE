@@ -23,7 +23,20 @@ from disimpy import gradients, simulations, substrates
 from packed_cylinders import build_substrate_mesh
 from generate_dispersed_phantom import (watson_sample_z, odi_to_kappa,
                                         kernel_directions, SHELLS)
-from generate_tissue_substrates import rot_z_to
+
+
+def rot_z_to(v):
+    """Rotation matrix taking +z onto unit vector ``v`` (Rodrigues)."""
+    v = np.asarray(v, float); v = v / np.linalg.norm(v)
+    z = np.array([0., 0., 1.]); c = float(z @ v)
+    if c > 1 - 1e-12:
+        return np.eye(3)
+    if c < -1 + 1e-12:
+        return np.diag([1., -1., -1.])
+    k = np.cross(z, v); s = np.linalg.norm(k); k /= s
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + s * K + (1 - c) * (K @ K)
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data_bio")

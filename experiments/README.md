@@ -73,13 +73,12 @@ shallow crossings are representable — see
 
 ## Monte Carlo true-physics phantom (`mc_phantom/`)
 
-FORCE recovery tested against phantoms whose signal comes from an actual
-GPU random-walk diffusion simulation (disimpy) in packed impermeable cylinders,
-rather than any analytic compartment model — an out-of-model validation of
-neurite density, orientation dispersion, fiber count, crossings and free water.
-Requires an NVIDIA GPU and disimpy; no simulation output is committed. Setup and
-the full experiment catalogue are in [`mc_phantom/README.md`](mc_phantom/README.md)
-and [`mc_phantom/SUMMARY.md`](mc_phantom/SUMMARY.md).
+FORCE microstructure recovery compared against DTI, DKI and AMICO-NODDI on a
+phantom whose signal comes from an actual GPU random-walk diffusion simulation
+(disimpy) in packed impermeable cylinders, rather than any analytic compartment
+model — an out-of-model test. Requires an NVIDIA GPU and disimpy; no simulation
+output is committed. Setup and results are in
+[`mc_phantom/README.md`](mc_phantom/README.md).
 
 ## Reference partial-volume maps (MRtrix3)
 
