@@ -54,17 +54,26 @@ pip install dmri-amico          # optional, baseline only
 ## What you must supply
 
 The generators simulate on a **real acquisition protocol** rather than a toy
-scheme. Each script points at a protocol directory:
+scheme, so you need to supply an **HCP-like subject** — a directory holding two
+FSL-format text files, `bvals` and `bvecs` (the paper used a 288-volume,
+b = 0/1/2/3k protocol; any multi-shell HDR/HARDI-style scheme works).
+
+The scripts read that directory from the `FORCE_PROTO` environment variable,
+defaulting to `hcp_subject/` next to the scripts:
 
 ```python
-PROTO = "/home/athshah/Phi/165840"   # edit this
+PROTO = os.environ.get("FORCE_PROTO", "hcp_subject")
 ```
 
-That directory must hold two FSL-format text files, `bvals` and `bvecs` (the
-paper used subject 165840's 288-volume, b = 0/1/2/3k protocol). Point `PROTO` at
-your own `bvals`/`bvecs` and the phantom is simulated on your scheme. The
-HCP-slice scripts (`prior_slice72.py`) additionally expect that subject's DWI
-volume; adapt the paths at the top of those files to your data.
+So either drop your subject's `bvals`/`bvecs` into a `hcp_subject/` folder here,
+or point the variable at your own copy:
+
+```bash
+export FORCE_PROTO=/path/to/your/hcp_subject
+```
+
+The HCP-slice script (`prior_slice72.py`) additionally needs that subject's DWI
+volume; it reads the subject directory from `FORCE_SUBJECT` (same default).
 
 ## Running it
 

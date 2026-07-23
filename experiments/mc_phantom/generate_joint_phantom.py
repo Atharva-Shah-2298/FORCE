@@ -21,7 +21,7 @@ from generate_dispersed_phantom import simulate_kernel, convolve
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
-PROTO = "/home/athshah/Phi/165840"
+PROTO = os.environ.get("FORCE_PROTO", "hcp_subject")  # HCP-like subject dir with bvals/bvecs
 CSF_D = 3.0e-9
 
 

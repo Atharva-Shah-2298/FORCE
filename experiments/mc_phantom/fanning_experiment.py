@@ -10,7 +10,7 @@ from dipy.data import default_sphere
 from dipy.reconst.force import FORCEModel, softmax_stable
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-P = "/home/athshah/Phi/165840"
+P = os.environ.get("FORCE_PROTO", "hcp_subject")  # HCP-like subject dir with bvals/bvecs
 D0 = 2.2e-9
 
 

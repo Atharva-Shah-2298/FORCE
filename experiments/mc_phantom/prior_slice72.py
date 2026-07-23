@@ -22,8 +22,8 @@ from dipy.direction.peaks import PeaksAndMetrics
 from dipy.io.peaks import save_pam
 from dipy.reconst.force import FORCEModel, softmax_stable
 
-P = "/home/athshah/Phi/165840"
-OUTROOT = "/home/athshah/force_paper_experiments/exp10_mc_phantom"
+P = os.environ.get("FORCE_SUBJECT", "hcp_subject")  # HCP-like subject: DWI + bvals/bvecs
+OUTROOT = os.path.dirname(os.path.abspath(__file__))
 Z = 72
 K, BETA, NSIM = 50, 2000.0, 500000
 

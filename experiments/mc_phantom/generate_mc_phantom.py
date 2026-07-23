@@ -31,7 +31,7 @@ from packed_cylinders import build_substrate_mesh
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
-PROTO = "/home/athshah/Phi/165840"
+PROTO = os.environ.get("FORCE_PROTO", "hcp_subject")  # HCP-like subject dir with bvals/bvecs
 D0 = 2.0e-9        # intrinsic diffusivity m^2/s (=2.0e-3 mm^2/s, within dict d_par range)
 CSF_D = 3.0e-9     # free-water diffusivity m^2/s
 DELTA, delta = 30e-3, 10e-3

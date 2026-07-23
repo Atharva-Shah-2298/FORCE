@@ -4,7 +4,8 @@ from disimpy import gradients, simulations, substrates
 from packed_cylinders import build_substrate_mesh
 from dipy.core.gradients import gradient_table
 from dipy.reconst.force import FORCEModel, softmax_stable
-P="/home/athshah/Phi/165840"; D0=2.2e-9
+P = os.environ.get("FORCE_PROTO", "hcp_subject")  # HCP-like subject dir with bvals/bvecs
+D0=2.2e-9
 bvals=np.loadtxt(P+"/bvals").ravel(); bvecs=np.loadtxt(P+"/bvecs")
 if bvecs.shape[0]==3: bvecs=bvecs.T
 sigs={}
