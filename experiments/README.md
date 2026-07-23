@@ -71,6 +71,16 @@ renders the figures. FORCE peaks are taken from the matched simulation via
 shallow crossings are representable — see
 [`synthetic_angle_accuracy/README.md`](synthetic_angle_accuracy/README.md).
 
+## Monte Carlo true-physics phantom (`mc_phantom/`)
+
+FORCE recovery tested against phantoms whose signal comes from an actual
+GPU random-walk diffusion simulation (disimpy) in packed impermeable cylinders,
+rather than any analytic compartment model — an out-of-model validation of
+neurite density, orientation dispersion, fiber count, crossings and free water.
+Requires an NVIDIA GPU and disimpy; no simulation output is committed. Setup and
+the full experiment catalogue are in [`mc_phantom/README.md`](mc_phantom/README.md)
+and [`mc_phantom/SUMMARY.md`](mc_phantom/SUMMARY.md).
+
 ## Reference partial-volume maps (MRtrix3)
 
 The tissue partial-volume maps that FORCE's WM/GM/CSF fractions are compared
