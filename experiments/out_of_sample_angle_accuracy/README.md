@@ -16,9 +16,8 @@ Phantoms: `gen_crossings.py` (two-fiber, angle sweep), `gen_nufo.py` (1/2/3 fibe
 Fits: `fit_and_score.py` and `fit_force_crossings_alpha.py` (FORCE crossings),
 `fit_nufo.py` (FORCE + inverse, fiber count), `run_inverse.py` (CSA/CSD/GQI peaks),
 `run_odffp_pr.py` / `run_odffp_nufo.py` (ODF-FP).
-Scoring/figures: `score_all.py`, `nufo_fig.py`, `build_reference_figure.py`,
-`make_45deg_figure.py`; ODF glyphs via `viz_dev.py`, `viz_odffp.py`, `render_glyphs.py`.
+Scoring/printing: `score_all.py` (angular resolution), `nufo_fig.py` (fiber count).
 
 Peaks are amplitude-pruned (0.5x max) and matched 1-to-1 to the true axes within
 20 deg; inverse-method peak detection uses a 25 deg (or 45 deg) minimum separation.
-Data (`*.npz`) and figures are git-ignored.
+Data (`*.npz`) is git-ignored.
